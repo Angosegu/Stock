@@ -1,0 +1,6 @@
+{
+  "name": "VBSP ERP",
+  "description": "Sistema profissional de Gestão de Stock e Logística para a VBSP, com painel inteligente, rastreabilidade de lotes, simulador SAFT-AO e Assistente IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

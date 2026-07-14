@@ -177,6 +177,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("vbsp_companyName", companyName);
+    document.title = companyName || "AMADJE - COMÉRCIO GERAL";
   }, [companyName]);
 
   useEffect(() => {

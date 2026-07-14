@@ -254,8 +254,30 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const fetchDatabase = async () => {
+      // 1. If running under 'file:' protocol (direct packaged EXE without web server, e.g. Electron, Tauri, static WebView),
+      // we bypass fetching from API server entirely and rely 100% on LocalStorage. This is extremely fast and robust!
+      if (window.location.protocol === "file:") {
+        console.log("Detectado protocolo file://. Modo offline local ativado com sucesso!");
+        if (active) {
+          setLoadingDb(false);
+        }
+        return;
+      }
+
+      // 2. Set up an AbortController with a 1.2s timeout to prevent hanging if the backend does not answer or is offline
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 1200);
+
       try {
-        const response = await fetch("/api/db/get");
+        const response = await fetch("/api/db/get", { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`Resposta HTTP inválida: ${response.status}`);
+        }
+
         const data = await response.json();
         if (!active) return;
 
@@ -327,7 +349,8 @@ export default function App() {
           });
         }
       } catch (err) {
-        console.error("Falha ao sincronizar com a base de dados local do servidor:", err);
+        clearTimeout(timeoutId);
+        console.error("Falha ao sincronizar com a base de dados do servidor, usando dados locais offline:", err);
       } finally {
         if (active) {
           setLoadingDb(false);
@@ -344,6 +367,7 @@ export default function App() {
   // Automatically save state to server local database whenever it is updated
   useEffect(() => {
     if (loadingDb) return; // Wait until initial load is complete!
+    if (window.location.protocol === "file:") return; // Bypass API save on local packaged offline files
 
     const saveTimeout = setTimeout(async () => {
       try {

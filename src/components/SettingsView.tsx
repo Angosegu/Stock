@@ -53,6 +53,14 @@ interface SettingsViewProps {
   setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   units: string[];
   setUnits: React.Dispatch<React.SetStateAction<string[]>>;
+
+  // Fiscal Parameters (shared with App state for database persistence)
+  companyName: string;
+  setCompanyName: (name: string) => void;
+  nif: string;
+  setNif: (nif: string) => void;
+  taxRegime: string;
+  setTaxRegime: (regime: string) => void;
   
   // App state for backup
   appData: {
@@ -231,6 +239,12 @@ export default function SettingsView({
   setCategories,
   units,
   setUnits,
+  companyName,
+  setCompanyName,
+  nif,
+  setNif,
+  taxRegime,
+  setTaxRegime,
   appData,
   onUpdatePassword,
   onClearAllData,
@@ -244,11 +258,6 @@ export default function SettingsView({
   onShowConfirm,
   onRestoreBackup
 }: SettingsViewProps) {
-  // Local fiscal states (persisted locally to keep view consistent)
-  const [companyName, setCompanyName] = useState(() => localStorage.getItem("vbsp_companyName") || "AMADJE - COMERCIO GERAL");
-  const [nif, setNif] = useState(() => localStorage.getItem("vbsp_nif") || "AO500982312");
-  const [taxRegime, setTaxRegime] = useState(() => localStorage.getItem("vbsp_taxRegime") || "simplificado");
-
   // Interaction feedback states
   const [isSaved, setIsSaved] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);

@@ -36,6 +36,7 @@ export default function App() {
 
   // User Access & Role
   const [currentUser, setCurrentUser] = useState<UserRole | null>(null);
+  const [loadingDb, setLoadingDb] = useState(true);
 
   // Persistent System Settings
   const [systemName, setSystemName] = useState(() => localStorage.getItem("vbsp_systemName") || "AMADJE - COMERCIO GERAL");
@@ -45,6 +46,9 @@ export default function App() {
   const [skuMode, setSkuMode] = useState(() => localStorage.getItem("vbsp_skuMode") || "automatico"); // "automatico" | "manual"
   const [defaultMinStock, setDefaultMinStock] = useState(() => Number(localStorage.getItem("vbsp_defaultMinStock")) || 15);
   const [autoBackup, setAutoBackup] = useState(() => (localStorage.getItem("vbsp_autoBackup") !== "false")); // default true
+  const [companyName, setCompanyName] = useState(() => localStorage.getItem("vbsp_companyName") || "AMADJE - COMERCIO GERAL");
+  const [nif, setNif] = useState(() => localStorage.getItem("vbsp_nif") || "AO500982312");
+  const [taxRegime, setTaxRegime] = useState(() => localStorage.getItem("vbsp_taxRegime") || "simplificado");
   
   // Custom categories and units
   const [categories, setCategories] = useState<string[]>(() => {
@@ -151,6 +155,18 @@ export default function App() {
     localStorage.setItem("vbsp_userPasswords", JSON.stringify(userPasswords));
   }, [userPasswords]);
 
+  useEffect(() => {
+    localStorage.setItem("vbsp_companyName", companyName);
+  }, [companyName]);
+
+  useEffect(() => {
+    localStorage.setItem("vbsp_nif", nif);
+  }, [nif]);
+
+  useEffect(() => {
+    localStorage.setItem("vbsp_taxRegime", taxRegime);
+  }, [taxRegime]);
+
   // Filtered lists if current user is an operator assigned to a single store
   const filteredItems = currentUser?.assignedStore
     ? items.filter(item => item.warehouse === currentUser.assignedStore)
@@ -234,23 +250,160 @@ export default function App() {
     }
   };
 
-  // One-time automatic system clear for a clean slate & company rename
+  // Load database from server on mount (local server-side JSON database)
   useEffect(() => {
-    if (localStorage.getItem("vbsp_force_reset_v5") !== "true") {
-      setItems([]);
-      setMovements([]);
-      setInvoices([]);
-      setSystemName("AMADJE - COMERCIO GERAL");
-      setLogoText("A");
-      localStorage.setItem("vbsp_items", JSON.stringify([]));
-      localStorage.setItem("vbsp_movements", JSON.stringify([]));
-      localStorage.setItem("vbsp_invoices", JSON.stringify([]));
-      localStorage.setItem("vbsp_systemName", "AMADJE - COMERCIO GERAL");
-      localStorage.setItem("vbsp_logoText", "A");
-      localStorage.setItem("vbsp_companyName", "AMADJE - COMERCIO GERAL");
-      localStorage.setItem("vbsp_force_reset_v5", "true");
-    }
+    let active = true;
+    const fetchDatabase = async () => {
+      try {
+        const response = await fetch("/api/db/get");
+        const data = await response.json();
+        if (!active) return;
+
+        if (data && !data.empty) {
+          // Load everything into states
+          if (data.items) setItems(data.items);
+          if (data.movements) setMovements(data.movements);
+          if (data.invoices) setInvoices(data.invoices);
+          if (data.warehouses) setWarehouses(data.warehouses);
+          if (data.users) setUsers(data.users);
+          if (data.userPasswords) setUserPasswords(data.userPasswords);
+          
+          if (data.settings) {
+            const s = data.settings;
+            if (s.systemName) setSystemName(s.systemName);
+            if (s.logoText) setLogoText(s.logoText);
+            if (s.systemColor) setSystemColor(s.systemColor);
+            if (s.language) setLanguage(s.language);
+            if (s.skuMode) setSkuMode(s.skuMode);
+            if (s.defaultMinStock !== undefined) setDefaultMinStock(s.defaultMinStock);
+            if (s.autoBackup !== undefined) setAutoBackup(s.autoBackup);
+            if (s.categories) setCategories(s.categories);
+            if (s.units) setUnits(s.units);
+            if (s.darkMode !== undefined) setDarkMode(s.darkMode);
+            if (s.companyName) setCompanyName(s.companyName);
+            if (s.nif) setNif(s.nif);
+            if (s.taxRegime) setTaxRegime(s.taxRegime);
+          }
+        } else {
+          // If server database is empty, seed it with whatever is currently in localStorage (so we don't lose anything)
+          // or start clean if localStorage is empty.
+          const localItems = localStorage.getItem("vbsp_items");
+          const hasLocalData = localItems && JSON.parse(localItems).length > 0;
+          
+          const initialDbState = {
+            items: hasLocalData ? JSON.parse(localStorage.getItem("vbsp_items") || "[]") : [],
+            movements: hasLocalData ? JSON.parse(localStorage.getItem("vbsp_movements") || "[]") : [],
+            invoices: hasLocalData ? JSON.parse(localStorage.getItem("vbsp_invoices") || "[]") : [],
+            warehouses: localStorage.getItem("vbsp_warehouses") ? JSON.parse(localStorage.getItem("vbsp_warehouses")!) : INITIAL_WAREHOUSES,
+            users: localStorage.getItem("vbsp_users") ? JSON.parse(localStorage.getItem("vbsp_users")!) : SYSTEM_USERS,
+            userPasswords: localStorage.getItem("vbsp_userPasswords") ? JSON.parse(localStorage.getItem("vbsp_userPasswords")!) : {
+              admin: "admin",
+              "operador-luanda": "admin",
+              "operador-benguela": "admin",
+              "operador-lobito": "admin"
+            },
+            settings: {
+              systemName,
+              logoText,
+              systemColor,
+              language,
+              skuMode,
+              defaultMinStock,
+              autoBackup,
+              categories,
+              units,
+              darkMode,
+              companyName,
+              nif,
+              taxRegime
+            }
+          };
+
+          // Save to server to initialize it
+          await fetch("/api/db/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(initialDbState)
+          });
+        }
+      } catch (err) {
+        console.error("Falha ao sincronizar com a base de dados local do servidor:", err);
+      } finally {
+        if (active) {
+          setLoadingDb(false);
+        }
+      }
+    };
+
+    fetchDatabase();
+    return () => {
+      active = false;
+    };
   }, []);
+
+  // Automatically save state to server local database whenever it is updated
+  useEffect(() => {
+    if (loadingDb) return; // Wait until initial load is complete!
+
+    const saveTimeout = setTimeout(async () => {
+      try {
+        const dbState = {
+          items,
+          movements,
+          invoices,
+          warehouses,
+          users,
+          userPasswords,
+          settings: {
+            systemName,
+            logoText,
+            systemColor,
+            language,
+            skuMode,
+            defaultMinStock,
+            autoBackup,
+            categories,
+            units,
+            darkMode,
+            companyName,
+            nif,
+            taxRegime
+          }
+        };
+
+        await fetch("/api/db/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(dbState)
+        });
+      } catch (err) {
+        console.error("Erro ao guardar dados no servidor:", err);
+      }
+    }, 500); // 500ms debounce to prevent spamming saving requests on fast sequential operations
+
+    return () => clearTimeout(saveTimeout);
+  }, [
+    loadingDb,
+    items,
+    movements,
+    invoices,
+    warehouses,
+    users,
+    userPasswords,
+    systemName,
+    logoText,
+    systemColor,
+    language,
+    skuMode,
+    defaultMinStock,
+    autoBackup,
+    categories,
+    units,
+    darkMode,
+    companyName,
+    nif,
+    taxRegime
+  ]);
 
   // Watch for dark mode changes
   useEffect(() => {
@@ -765,6 +918,26 @@ export default function App() {
     { id: "settings", label: t("settings"), icon: <Settings size={18} /> },
   ];
 
+  if (loadingDb) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-900 text-white font-sans">
+        <div className="flex flex-col items-center space-y-4 max-w-sm px-6 text-center">
+          <div className="relative flex items-center justify-center">
+            <div className="w-16 h-16 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin"></div>
+            <div className="absolute font-display font-bold text-xl text-brand-400">A</div>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-display font-bold tracking-tight text-slate-100 font-sans">AMADJE - COMÉRCIO GERAL</h1>
+            <p className="text-xs text-slate-400 font-mono animate-pulse">Sincronizando com a Base de Dados Local...</p>
+          </div>
+          <div className="text-[10px] text-slate-500 max-w-[240px]">
+            O seu inventário e configurações estão a ser carregados de forma segura e permanente no servidor.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentUser) {
     return (
       <LoginView 
@@ -1091,6 +1264,12 @@ export default function App() {
               setCategories={setCategories}
               units={units}
               setUnits={setUnits}
+              companyName={companyName}
+              setCompanyName={setCompanyName}
+              nif={nif}
+              setNif={setNif}
+              taxRegime={taxRegime}
+              setTaxRegime={setTaxRegime}
               appData={{ items, movements, warehouses, invoices }}
               onUpdatePassword={handleUpdatePassword}
               onClearAllData={handleClearAllData}

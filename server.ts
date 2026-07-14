@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import "dotenv/config";
@@ -8,7 +9,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
 
   // Lazy-loaded Gemini Client
   let aiClient: GoogleGenAI | null = null;
@@ -31,6 +32,34 @@ async function startServer() {
   }
 
   // --- API Routes ---
+
+  const DB_PATH = path.join(process.cwd(), "database.json");
+
+  // Get server database state
+  app.get("/api/db/get", async (req, res) => {
+    try {
+      if (fs.existsSync(DB_PATH)) {
+        const data = await fs.promises.readFile(DB_PATH, "utf-8");
+        return res.json(JSON.parse(data));
+      }
+      return res.json({ empty: true });
+    } catch (error: any) {
+      console.error("Erro ao ler base de dados local:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Save server database state
+  app.post("/api/db/save", async (req, res) => {
+    try {
+      const dbState = req.body;
+      await fs.promises.writeFile(DB_PATH, JSON.stringify(dbState, null, 2), "utf-8");
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro ao gravar base de dados local:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // Health check
   app.get("/api/health", (req, res) => {

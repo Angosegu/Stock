@@ -32,7 +32,27 @@ import ConfirmationModal from "./components/ConfirmationModal";
 
 export default function App() {
   // Navigation
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeTab, setActiveTabRaw] = useState("dashboard");
+  const [pendingTab, setPendingTab] = useState("dashboard");
+  const [menuLoading, setMenuLoading] = useState(false);
+  const tabTimerRef = React.useRef<any>(null);
+
+  const setActiveTab = (tabId: string) => {
+    setActiveTabRaw((current) => {
+      if (tabId === current) return current;
+      if (tabTimerRef.current) {
+        clearTimeout(tabTimerRef.current);
+      }
+      setPendingTab(tabId);
+      setMenuLoading(true);
+      tabTimerRef.current = setTimeout(() => {
+        setActiveTabRaw(tabId);
+        setMenuLoading(false);
+        tabTimerRef.current = null;
+      }, 400); // smooth transitions
+      return current;
+    });
+  };
 
   // User Access & Role
   const [currentUser, setCurrentUser] = useState<UserRole | null>(null);
@@ -1187,9 +1207,32 @@ export default function App() {
         </header>
 
         {/* WORKSPACE RENDERING AREA */}
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 relative min-h-[400px]">
           
-          {/* Dashboard Tab */}
+          {/* Menu Loading Overlay */}
+          {menuLoading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50/70 dark:bg-dark-bg/70 backdrop-blur-[2px] z-30 animate-in fade-in duration-200">
+              <div className="flex flex-col items-center space-y-4 max-w-sm px-6 text-center">
+                <div className="relative flex items-center justify-center">
+                  <div className="w-14 h-14 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin"></div>
+                  <span className="absolute font-display font-bold text-sm text-brand-600 dark:text-brand-400">
+                    {logoText}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">
+                    A carregar módulo
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-mono">
+                    A preparar {menuItems.find(m => m.id === pendingTab)?.label || "Menu"}...
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className={menuLoading ? "opacity-35 pointer-events-none filter blur-[2px] transition-all duration-200" : "transition-all duration-200"}>
+            {/* Dashboard Tab */}
           {activeTab === "dashboard" && (
             <DashboardView 
               items={filteredItems} 
@@ -1309,6 +1352,7 @@ export default function App() {
             />
           )}
 
+          </div>
         </div>
 
         {/* SYSTEM STATUS FOOTER */}

@@ -1,0 +1,9 @@
+{
+  "dbType": "mysql",
+  "dbHost": "65.21.252.101",
+  "dbPort": "3306",
+  "dbName": "mobitec2_amadje",
+  "dbUser": "mobitec2_amadje",
+  "dbPass": "Luanda2020.",
+  "customDomain": ""
+}

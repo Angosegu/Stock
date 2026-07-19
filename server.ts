@@ -33,18 +33,463 @@ async function startServer() {
 
   // --- API Routes ---
 
+  // --- Dynamic Database Adapter (MySQL, PostgreSQL, SQLite) ---
+  const CONFIG_PATH = path.join(process.cwd(), "db_config.json");
   const DB_PATH = path.join(process.cwd(), "database.json");
+
+  // Load database configuration (either from persistent file or from environment variables)
+  let dbConfig = {
+    dbType: process.env.DATABASE_TYPE || "mysql",
+    dbHost: process.env.DATABASE_HOST || "65.21.252.101",
+    dbPort: process.env.DATABASE_PORT || "3306",
+    dbName: process.env.DATABASE_NAME || "mobitec2_amadje",
+    dbUser: process.env.DATABASE_USER || "mobitec2_amadje",
+    dbPass: process.env.DATABASE_PASS || "Luanda2020.",
+    customDomain: process.env.VITE_CUSTOM_DOMAIN || "",
+  };
+
+  // Helper to trim and clean configuration inputs
+  function cleanConfig(config: any) {
+    if (!config) return config;
+    const cleaned = { ...config };
+    if (typeof cleaned.dbHost === "string") cleaned.dbHost = cleaned.dbHost.trim();
+    if (typeof cleaned.dbPort === "string") cleaned.dbPort = String(cleaned.dbPort).trim();
+    if (typeof cleaned.dbName === "string") cleaned.dbName = cleaned.dbName.trim();
+    if (typeof cleaned.dbUser === "string") cleaned.dbUser = cleaned.dbUser.trim();
+    return cleaned;
+  }
+
+  // Helper to translate database errors to clear, friendly Portuguese explanations
+  function translateDbError(err: any): string {
+    const msg = (err.message || String(err)).toLowerCase();
+    const code = err.code ? String(err.code).toUpperCase() : "";
+    const errno = err.errno ? String(err.errno).toUpperCase() : "";
+    const errorno = err.errorno ? String(err.errorno).toUpperCase() : "";
+    console.warn("[VBSP BD] Traduzindo erro de conexão:", err.message || String(err), "Code:", code, "Errno:", errno, "Errorno:", errorno);
+
+    if (
+      msg.includes("getaddrinfo enotfound") || 
+      msg.includes("eai_again") || 
+      code === "ENOTFOUND" || 
+      code === "EAI_AGAIN" ||
+      errno === "ENOTFOUND" ||
+      errorno === "ENOTFOUND"
+    ) {
+      const hostMatch = (err.message || String(err)).match(/(?:ENOTFOUND|EAI_AGAIN)\s+([^\s]+)/) || (err.message || String(err)).match(/getaddrinfo\s+(?:ENOTFOUND|EAI_AGAIN)\s+([^\s]+)/);
+      const hostName = hostMatch ? ` "${hostMatch[1].trim()}"` : "";
+      return `Servidor de base de dados não encontrado (erro de DNS)${hostName}. Por favor, verifique se o Host/IP está correto e não contém espaços extra ou carateres inválidos.`;
+    }
+
+    if (
+      msg.includes("econnrefused") || 
+      code === "ECONNREFUSED" || 
+      errno === "ECONNREFUSED" || 
+      errorno === "ECONNREFUSED"
+    ) {
+      const portMatch = (err.message || String(err)).match(/(\d+)/);
+      const portStr = portMatch ? ` na porta ${portMatch[1]}` : "";
+      return `Ligação recusada pelo servidor remoto${portStr}. Certifique-se de que o serviço (PostgreSQL/MySQL) está ativo no servidor externo e aceita ligações remotas.`;
+    }
+
+    if (
+      msg.includes("etimedout") || 
+      msg.includes("timeout") || 
+      msg.includes("timedout") || 
+      code === "ETIMEDOUT" || 
+      errno === "ETIMEDOUT" || 
+      errorno === "ETIMEDOUT"
+    ) {
+      return `Tempo limite de ligação esgotado (Timeout). O servidor remoto está inacessível. Certifique-se de que o Host/IP está correto, a porta correspondente está aberta na firewall do seu servidor (ex: 3306 para MySQL ou 5432 para PostgreSQL), e que o servidor de base de dados permite ligações externas (no cPanel, configure 'Remote MySQL' para permitir acessos de '%').`;
+    }
+
+    if (
+      msg.includes("access denied") || 
+      msg.includes("authentication failed") || 
+      msg.includes("password authentication failed") ||
+      msg.includes("28000") || 
+      msg.includes("er_access_denied_error") ||
+      code === "ER_ACCESS_DENIED_ERROR"
+    ) {
+      return `Erro de autenticação: Acesso negado. O utilizador ou a palavra-passe estão incorretos para esta base de dados.`;
+    }
+
+    if (
+      msg.includes("does not exist") || 
+      msg.includes("bad_db") || 
+      msg.includes("er_bad_db_error") || 
+      msg.includes("3d000") ||
+      code === "ER_BAD_DB_ERROR"
+    ) {
+      return `A base de dados (Database Name) especificada não existe no servidor remoto. Certifique-se de criá-la previamente no seu servidor ou verifique o nome inserido.`;
+    }
+
+    if (msg.includes("no pg_hba.conf entry")) {
+      return `Configuração de segurança (pg_hba.conf) no PostgreSQL impede esta ligação. Certifique-se de configurar o seu PostgreSQL para aceitar conexões TCP/IP externas com SSL ativo.`;
+    }
+
+    return `Erro de ligação: ${err.message || String(err)}`;
+  }
+
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      const savedConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+      dbConfig = cleanConfig({ ...dbConfig, ...savedConfig });
+    } catch (e) {
+      console.error("Erro ao carregar db_config.json:", e);
+    }
+  }
+
+  // Caching flag to prevent redundant table checks
+  let tablesEnsured = false;
+
+  // Track if active database is known to be down/unreachable to prevent sluggish timeouts
+  let activeDbFailed = false;
+  let lastDbFailureTime = 0;
+  const DB_FAILURE_COOLDOWN = 20000; // 20 seconds cooldown before retrying
+
+  // Helper to identify direct network-level unreachability errors to avoid double timeout fallbacks
+  function isNetworkUnreachableError(err: any): boolean {
+    const msg = (err.message || String(err)).toLowerCase();
+    const code = err.code ? String(err.code).toUpperCase() : "";
+    const errno = err.errno ? String(err.errno).toUpperCase() : "";
+    const errorno = err.errorno ? String(err.errorno).toUpperCase() : "";
+    return (
+      msg.includes("etimedout") ||
+      msg.includes("econnrefused") ||
+      msg.includes("enotfound") ||
+      msg.includes("eai_again") ||
+      msg.includes("timeout expired") ||
+      msg.includes("connection timeout") ||
+      code === "ETIMEDOUT" ||
+      code === "ECONNREFUSED" ||
+      code === "ENOTFOUND" ||
+      code === "EAI_AGAIN" ||
+      errno === "ETIMEDOUT" ||
+      errorno === "ETIMEDOUT" ||
+      errno === "ECONNREFUSED" ||
+      errorno === "ECONNREFUSED"
+    );
+  }
+
+  // Active database connection pool/client helper
+  async function queryExternalDb(config: typeof dbConfig, queryText: string, params: any[] = [], bypassCooldown = false): Promise<any> {
+    const cleaned = cleanConfig(config);
+    const type = cleaned.dbType;
+    if (type === "sqlite") {
+      throw new Error("Base de dados local (SQLite/JSON) ativa. Sem conexão externa.");
+    }
+
+    const cleanedActive = cleanConfig(dbConfig);
+    const isActiveConfig = (
+      cleaned.dbHost === cleanedActive.dbHost && 
+      String(cleaned.dbPort) === String(cleanedActive.dbPort) && 
+      cleaned.dbName === cleanedActive.dbName && 
+      cleaned.dbUser === cleanedActive.dbUser && 
+      cleaned.dbType === cleanedActive.dbType
+    );
+
+    if (!bypassCooldown && isActiveConfig && activeDbFailed && (Date.now() - lastDbFailureTime < DB_FAILURE_COOLDOWN)) {
+      throw new Error(`O servidor remoto (${cleaned.dbHost}) está inacessível (cooldown ativo para evitar lentidão).`);
+    }
+
+    try {
+      let result;
+      if (type === "postgresql") {
+        const { default: pg } = await import("pg");
+        let client;
+        try {
+          // Try with SSL first (default behavior for managed cloud dbs)
+          client = new pg.Client({
+            host: cleaned.dbHost,
+            port: Number(cleaned.dbPort) || 5432,
+            database: cleaned.dbName,
+            user: cleaned.dbUser,
+            password: cleaned.dbPass,
+            ssl: cleaned.dbHost !== "localhost" && cleaned.dbHost !== "127.0.0.1" ? { rejectUnauthorized: false } : false,
+            connectionTimeoutMillis: 4000, // 4 seconds connection timeout
+          });
+          await client.connect();
+        } catch (sslErr: any) {
+          if (isNetworkUnreachableError(sslErr)) {
+            throw sslErr;
+          }
+          console.warn("[VBSP BD] Falha ao ligar ao PostgreSQL com SSL, a tentar sem SSL...", sslErr.message);
+          // Fallback: Try without SSL
+          client = new pg.Client({
+            host: cleaned.dbHost,
+            port: Number(cleaned.dbPort) || 5432,
+            database: cleaned.dbName,
+            user: cleaned.dbUser,
+            password: cleaned.dbPass,
+            ssl: false,
+            connectionTimeoutMillis: 4000,
+          });
+          await client.connect();
+        }
+        try {
+          const res = await client.query(queryText, params);
+          result = res.rows;
+        } finally {
+          await client.end();
+        }
+      } else if (type === "mysql") {
+        const { default: mysql } = await import("mysql2/promise");
+        let connection;
+        try {
+          // Try WITHOUT forcing SSL first (optimal for typical VPS, cPanel, and external hosting providers)
+          connection = await mysql.createConnection({
+            host: cleaned.dbHost,
+            port: Number(cleaned.dbPort) || 3306,
+            database: cleaned.dbName,
+            user: cleaned.dbUser,
+            password: cleaned.dbPass,
+            connectTimeout: 4000, // 4 seconds connection timeout
+          });
+        } catch (noSslErr: any) {
+          const msg = noSslErr.message || "";
+          // If it's explicitly an access/credentials/database error, or a network unreachable error, propagate it immediately
+          if (
+            isNetworkUnreachableError(noSslErr) ||
+            msg.includes("Access denied") || 
+            msg.includes("access denied") || 
+            msg.includes("ER_BAD_DB_ERROR") || 
+            msg.includes("ER_ACCESS_DENIED_ERROR")
+          ) {
+            throw noSslErr;
+          }
+
+          console.warn("[VBSP BD] Falha ao ligar ao MySQL sem SSL, a tentar com SSL...", noSslErr.message);
+          // Fallback: Try with SSL forced
+          connection = await mysql.createConnection({
+            host: cleaned.dbHost,
+            port: Number(cleaned.dbPort) || 3306,
+            database: cleaned.dbName,
+            user: cleaned.dbUser,
+            password: cleaned.dbPass,
+            ssl: { rejectUnauthorized: false },
+            connectTimeout: 4000,
+          });
+        }
+        try {
+          const [rows] = await connection.execute(queryText, params);
+          result = rows;
+        } finally {
+          await connection.end();
+        }
+      } else {
+        throw new Error("Tipo de base de dados não suportado: " + type);
+      }
+
+      if (isActiveConfig) {
+        activeDbFailed = false; // Reset failing state on success
+      }
+      return result;
+    } catch (err: any) {
+      if (isActiveConfig) {
+        console.warn(`[VBSP BD] Falha ao comunicar com a BD ativa (${cleaned.dbHost}). Marcado como offline.`);
+        activeDbFailed = true;
+        lastDbFailureTime = Date.now();
+      }
+      throw err;
+    }
+  }
+
+  // Ensure tables exist on external databases
+  async function ensureTables(config: typeof dbConfig) {
+    if (config.dbType === "sqlite") return;
+    if (tablesEnsured) return;
+    try {
+      if (config.dbType === "postgresql") {
+        await queryExternalDb(
+          config,
+          `CREATE TABLE IF NOT EXISTS erp_state (
+            id VARCHAR(50) PRIMARY KEY,
+            state_json TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );`
+        );
+        tablesEnsured = true;
+        console.log("[VBSP BD] Tabela 'erp_state' verificada/criada com sucesso em PostgreSQL.");
+      } else if (config.dbType === "mysql") {
+        await queryExternalDb(
+          config,
+          `CREATE TABLE IF NOT EXISTS erp_state (
+            id VARCHAR(50) PRIMARY KEY,
+            state_json LONGTEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          );`
+        );
+        tablesEnsured = true;
+        console.log("[VBSP BD] Tabela 'erp_state' verificada/criada com sucesso em MySQL.");
+      }
+    } catch (err: any) {
+      console.error("[VBSP BD] Erro ao garantir tabelas no banco de dados externo:", err.message);
+    }
+  }
+
+  // Initial table setup at startup
+  if (dbConfig.dbType !== "sqlite") {
+    ensureTables(dbConfig).catch((e) => {
+      console.warn("[VBSP BD] Erro de ligação inicial à base de dados externa:", e.message);
+    });
+  }
+
+  // Cache variables for DB status
+  let cachedStatus: any = null;
+  let lastStatusCheckTime = 0;
+  const STATUS_CACHE_TTL = 10000; // 10 seconds
+
+  // Get active database configuration
+  app.get("/api/db/config", (req, res) => {
+    res.json(dbConfig);
+  });
+
+  // Get active database status
+  app.get("/api/db/status", async (req, res) => {
+    const now = Date.now();
+    if (cachedStatus && (now - lastStatusCheckTime < STATUS_CACHE_TTL)) {
+      return res.json(cachedStatus);
+    }
+
+    try {
+      if (dbConfig.dbType === "sqlite") {
+        cachedStatus = {
+          success: true,
+          status: "ONLINE",
+          dbType: "sqlite",
+          message: "Servidor VBSP ativo. Base de dados local (SQLite/JSON) operacional."
+        };
+        lastStatusCheckTime = now;
+        return res.json(cachedStatus);
+      }
+
+      const testQuery = dbConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
+      await queryExternalDb(dbConfig, testQuery);
+
+      cachedStatus = {
+        success: true,
+        status: "ONLINE",
+        dbType: dbConfig.dbType,
+        message: `Servidor VBSP ativo e conectado com sucesso à base de dados externa (${dbConfig.dbType}).`
+      };
+      lastStatusCheckTime = now;
+      res.json(cachedStatus);
+    } catch (error: any) {
+      cachedStatus = {
+        success: false,
+        status: "ERROR",
+        dbType: dbConfig.dbType,
+        message: `Servidor VBSP ativo, mas falhou ao comunicar com a base de dados externa (${dbConfig.dbType}): ${translateDbError(error)}`
+      };
+      lastStatusCheckTime = now;
+      res.json(cachedStatus);
+    }
+  });
+
+  // Test connection endpoint
+  app.post("/api/db/test-connection", async (req, res) => {
+    try {
+      const testConfig = req.body;
+      if (testConfig.dbType === "sqlite") {
+        return res.json({ success: true, message: "Modo SQLite ativo por padrão. Pronto a usar!" });
+      }
+      
+      const query = testConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
+      await queryExternalDb(testConfig, query, [], true);
+      
+      res.json({ success: true, message: "Conexão estabelecida com sucesso com a sua base de dados externa!" });
+    } catch (error: any) {
+      console.warn("Erro ao testar conexão externa:", error);
+      res.status(400).json({ success: false, error: translateDbError(error) });
+    }
+  });
+
+  // Save server configurations dynamically and test them
+  app.post("/api/db/save-config", async (req, res) => {
+    try {
+      const newConfig = req.body;
+      
+      if (newConfig.dbType !== "sqlite") {
+        try {
+          const query = newConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
+          await queryExternalDb(newConfig, query, [], true);
+        } catch (connectionErr: any) {
+          return res.status(400).json({ 
+            success: false, 
+            error: `Não foi possível ligar ao servidor de base de dados: ${translateDbError(connectionErr)}` 
+          });
+        }
+      }
+
+      dbConfig = { ...dbConfig, ...newConfig };
+      await fs.promises.writeFile(CONFIG_PATH, JSON.stringify(dbConfig, null, 2), "utf-8");
+      
+      // Reset tablesEnsured and failure flags to force a fresh connection and validation
+      tablesEnsured = false;
+      cachedStatus = null;
+      activeDbFailed = false;
+      lastDbFailureTime = 0;
+
+      if (dbConfig.dbType !== "sqlite") {
+        await ensureTables(dbConfig);
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Configurações de servidor gravadas com sucesso! O sistema foi migrado instantaneamente.",
+        config: dbConfig 
+      });
+    } catch (error: any) {
+      console.warn("Erro ao salvar configuração de servidor:", error);
+      res.status(500).json({ success: false, error: translateDbError(error) });
+    }
+  });
 
   // Get server database state
   app.get("/api/db/get", async (req, res) => {
     try {
+      if (dbConfig.dbType !== "sqlite") {
+        try {
+          await ensureTables(dbConfig);
+          const query = dbConfig.dbType === "postgresql" 
+            ? "SELECT state_json FROM erp_state WHERE id = $1 LIMIT 1" 
+            : "SELECT state_json FROM erp_state WHERE id = ? LIMIT 1";
+            
+          const rows = await queryExternalDb(dbConfig, query, ["current"]);
+          if (rows && rows.length > 0) {
+            const stateData = rows[0].state_json;
+            const parsed = typeof stateData === "string" ? JSON.parse(stateData) : stateData;
+            return res.json({ 
+              ...parsed, 
+              __dbType: dbConfig.dbType, 
+              __dbHost: dbConfig.dbHost, 
+              __fallbackLocal: false 
+            });
+          }
+        } catch (dbErr: any) {
+          console.warn("[VBSP BD] Erro ao carregar da base de dados externa, a usar cópia de segurança local:", dbErr.message);
+        }
+      }
+
+      // SQLite/JSON Fallback (Active if sqlite or if external connection fails)
       if (fs.existsSync(DB_PATH)) {
         const data = await fs.promises.readFile(DB_PATH, "utf-8");
-        return res.json(JSON.parse(data));
+        const parsed = JSON.parse(data);
+        return res.json({ 
+          ...parsed, 
+          __dbType: dbConfig.dbType, 
+          __dbHost: dbConfig.dbHost, 
+          __fallbackLocal: dbConfig.dbType !== "sqlite" 
+        });
       }
-      return res.json({ empty: true });
+      return res.json({ 
+        empty: true, 
+        __dbType: dbConfig.dbType, 
+        __dbHost: dbConfig.dbHost, 
+        __fallbackLocal: dbConfig.dbType !== "sqlite" 
+      });
     } catch (error: any) {
-      console.error("Erro ao ler base de dados local:", error);
+      console.warn("Erro ao ler base de dados:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -53,10 +498,42 @@ async function startServer() {
   app.post("/api/db/save", async (req, res) => {
     try {
       const dbState = req.body;
+
+      // Always save a local copy to DB_PATH (database.json) for bulletproof backup
       await fs.promises.writeFile(DB_PATH, JSON.stringify(dbState, null, 2), "utf-8");
-      res.json({ success: true });
+
+      if (dbConfig.dbType !== "sqlite") {
+        try {
+          await ensureTables(dbConfig);
+          const stateStr = JSON.stringify(dbState);
+          
+          if (dbConfig.dbType === "postgresql") {
+            await queryExternalDb(
+              dbConfig,
+              `INSERT INTO erp_state (id, state_json, updated_at) 
+               VALUES ($1, $2, NOW()) 
+               ON CONFLICT (id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = NOW()`,
+              ["current", stateStr]
+            );
+          } else if (dbConfig.dbType === "mysql") {
+            await queryExternalDb(
+              dbConfig,
+              `INSERT INTO erp_state (id, state_json) 
+               VALUES (?, ?) 
+               ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)`,
+              ["current", stateStr]
+            );
+          }
+          return res.json({ success: true, mode: dbConfig.dbType, fallbackLocal: false });
+        } catch (dbErr: any) {
+          console.warn("[VBSP BD] Falha ao sincronizar com servidor externo. Gravado localmente em segurança:", dbErr.message);
+          return res.json({ success: true, mode: "sqlite", fallbackLocal: true, error: translateDbError(dbErr) });
+        }
+      }
+
+      res.json({ success: true, mode: "sqlite", fallbackLocal: false });
     } catch (error: any) {
-      console.error("Erro ao gravar base de dados local:", error);
+      console.warn("Erro ao gravar base de dados:", error);
       res.status(500).json({ error: error.message });
     }
   });

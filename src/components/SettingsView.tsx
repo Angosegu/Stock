@@ -21,7 +21,18 @@ import {
   Users,
   ShieldAlert,
   Upload,
-  UploadCloud
+  UploadCloud,
+  Globe,
+  Server,
+  Terminal,
+  Copy,
+  ExternalLink,
+  HelpCircle,
+  Check,
+  Info,
+  Layers,
+  Link2,
+  Wifi
 } from "lucide-react";
 import { UserRole } from "../types";
 
@@ -288,6 +299,290 @@ export default function SettingsView({
   const [newUserStore, setNewUserStore] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [userActionMessage, setUserActionMessage] = useState<{ success?: boolean; message: string } | null>(null);
+
+  // Local states for Self-Hosting Panel
+  const [dbType, setDbType] = useState("mysql");
+  const [dbHost, setDbHost] = useState("65.21.252.101");
+  const [dbPort, setDbPort] = useState("3306");
+  const [dbName, setDbName] = useState("mobitec2_amadje");
+  const [dbUser, setDbUser] = useState("mobitec2_amadje");
+  const [dbPass, setDbPass] = useState("Luanda2020.");
+  const [customDomain, setCustomDomain] = useState("erp.amadje.com");
+  const [copiedEnv, setCopiedEnv] = useState(false);
+  const [copiedDocker, setCopiedDocker] = useState(false);
+  const [activeHostingTab, setActiveHostingTab] = useState("db"); // 'db' | 'domain' | 'hosting' | 'env'
+
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [hostStatusMessage, setHostStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Local states for External API Connectivity Panel
+  const [customApiUrl, setCustomApiUrl] = useState(() => {
+    const saved = localStorage.getItem("host_customApiUrl");
+    if (!saved || saved === "https://api.amadje.com/api" || saved === "") {
+      return "/api/db";
+    }
+    return saved;
+  });
+  const [customGetPath, setCustomGetPath] = useState(() => {
+    const saved = localStorage.getItem("host_customGetPath");
+    if (!saved || saved === "/api/db/get") {
+      return "/get";
+    }
+    return saved;
+  });
+  const [customSavePath, setCustomSavePath] = useState(() => {
+    const saved = localStorage.getItem("host_customSavePath");
+    if (!saved || saved === "/api/db/save") {
+      return "/save";
+    }
+    return saved;
+  });
+  const [useRemoteApi, setUseRemoteApi] = useState(() => {
+    const saved = localStorage.getItem("host_useRemoteApi");
+    if (saved === null) return true; // Default is remote server persistence active
+    return saved !== "false";
+  });
+  const [testingApiConnection, setTestingApiConnection] = useState(false);
+  const [customApiToken, setCustomApiToken] = useState(() => localStorage.getItem("host_customApiToken") || "");
+  const [apiTestMessage, setApiTestMessage] = useState<{ success: boolean; message: string } | null>(null);
+  const [exportingToApi, setExportingToApi] = useState(false);
+
+  // Load server-active database configuration on mount
+  React.useEffect(() => {
+    fetch("/api/db/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data) {
+          if (data.dbType) setDbType(data.dbType);
+          if (data.dbHost) setDbHost(data.dbHost);
+          if (data.dbPort) setDbPort(data.dbPort);
+          if (data.dbName) setDbName(data.dbName);
+          if (data.dbUser) setDbUser(data.dbUser);
+          if (data.dbPass) setDbPass(data.dbPass);
+          if (data.customDomain) setCustomDomain(data.customDomain);
+        }
+      })
+      .catch((err) => console.warn("Aviso: Servidor offline ou protocolo local ativo. Usando SQLite local.", err));
+  }, []);
+
+  React.useEffect(() => {
+    localStorage.setItem("host_dbType", dbType);
+    localStorage.setItem("host_dbHost", dbHost);
+    localStorage.setItem("host_dbPort", dbPort);
+    localStorage.setItem("host_dbName", dbName);
+    localStorage.setItem("host_dbUser", dbUser);
+    localStorage.setItem("host_dbPass", dbPass);
+    localStorage.setItem("host_customDomain", customDomain);
+    localStorage.setItem("host_customApiUrl", customApiUrl);
+    localStorage.setItem("host_useRemoteApi", useRemoteApi ? "true" : "false");
+    localStorage.setItem("host_customGetPath", customGetPath);
+    localStorage.setItem("host_customSavePath", customSavePath);
+    localStorage.setItem("host_customApiToken", customApiToken);
+  }, [dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain, customApiUrl, useRemoteApi, customGetPath, customSavePath, customApiToken]);
+
+  const handleTestApiConnection = async () => {
+    setTestingApiConnection(true);
+    setApiTestMessage(null);
+    try {
+      const cleanUrl = customApiUrl.endsWith("/") ? customApiUrl.slice(0, -1) : customApiUrl;
+      const cleanPath = customGetPath.startsWith("/") ? customGetPath : `/${customGetPath}`;
+      const targetUrl = `${cleanUrl}${cleanPath}`;
+      const statusUrl = `${cleanUrl}/status`;
+
+      const headers: Record<string, string> = {};
+      if (customApiToken && customApiToken.trim()) {
+        headers["Authorization"] = `Bearer ${customApiToken.trim()}`;
+      }
+
+      // Proactive server status query (checks backend API we just created)
+      let statusDetails = "";
+      try {
+        const statusResponse = await fetch(statusUrl, { method: "GET" }).catch(() => null);
+        if (statusResponse && statusResponse.ok) {
+          const statusJson = await statusResponse.json();
+          if (statusJson && statusJson.status === "ONLINE") {
+            statusDetails = ` [BD Ativa: ${statusJson.dbType.toUpperCase()} - Operacional]`;
+          }
+        }
+      } catch (e) {
+        // Fallback gracefully
+      }
+
+      const response = await fetch(targetUrl, { 
+        method: "GET",
+        headers
+      }).catch(err => {
+        throw new Error(`Erro de rede / CORS: Não foi possível estabelecer ligação ao servidor em "${targetUrl}". Certifique-se de que o backend remoto está ativo, que a porta (ex: 3000) está aberta na firewall da VPS, e que as configurações CORS estão ativadas para aceitar ligações externas.`);
+      });
+      
+      if (response.ok) {
+        setApiTestMessage({ 
+          success: true, 
+          message: `Ligação estabelecida com sucesso! O seu backend remoto respondeu com sucesso (HTTP ${response.status}) no endpoint de leitura.${statusDetails} O sistema está pronto para operar em modo remoto!` 
+        });
+      } else if (response.status === 404) {
+        setApiTestMessage({ 
+          success: false, 
+          message: `Erro HTTP 404 (Não Encontrado) no URL "${targetUrl}". O servidor está online e acessível, mas este endpoint de leitura não existe. Verifique se o caminho do /get configurado coincide exatamente com a rota registada no seu ficheiro server.js do backend.` 
+        });
+      } else if (response.status === 401 || response.status === 403) {
+        setApiTestMessage({ 
+          success: false, 
+          message: `Erro HTTP ${response.status} (Não Autorizado) em "${targetUrl}". A ligação foi rejeitada pelo servidor devido a falta ou erro de credenciais. Garanta que inseriu o Token JWT Bearer correto no campo acima.` 
+        });
+      } else {
+        setApiTestMessage({ 
+          success: false, 
+          message: `O servidor remoto respondeu com código de erro HTTP ${response.status} no endpoint "${targetUrl}". Verifique a sua implementação backend ou consulte os logs do servidor.` 
+        });
+      }
+    } catch (err: any) {
+      setApiTestMessage({ 
+        success: false, 
+        message: err.message || "Erro de ligação." 
+      });
+    } finally {
+      setTestingApiConnection(false);
+    }
+  };
+
+  const handleExportToApi = async () => {
+    setExportingToApi(true);
+    setApiTestMessage(null);
+    try {
+      const cleanUrl = customApiUrl.endsWith("/") ? customApiUrl.slice(0, -1) : customApiUrl;
+      const cleanPath = customSavePath.startsWith("/") ? customSavePath : `/${customSavePath}`;
+      const targetUrl = `${cleanUrl}${cleanPath}`;
+
+      const localResponse = await fetch("/api/db/get");
+      if (!localResponse.ok) {
+        throw new Error("Não foi possível obter o estado local atual para exportar.");
+      }
+      const dbState = await localResponse.json();
+
+      const response = await fetch(targetUrl, {
+        method: "POST",
+        headers: (() => {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (customApiToken && customApiToken.trim()) {
+            headers["Authorization"] = `Bearer ${customApiToken.trim()}`;
+          }
+          return headers;
+        })(),
+        body: JSON.stringify(dbState)
+      }).catch(err => {
+        throw new Error(`Erro de rede / CORS ao enviar dados: Certifique-se de que o seu servidor backend remoto aceita requisições CORS (POST) e que o URL "${targetUrl}" está correto.`);
+      });
+
+      if (response.ok) {
+        setApiTestMessage({
+          success: true,
+          message: `Excelente! Todos os dados locais (artigos, faturas, movimentos) foram sincronizados com sucesso no endpoint "${targetUrl}".`
+        });
+      } else {
+        setApiTestMessage({
+          success: false,
+          message: `O backend remoto recusou os dados (HTTP ${response.status}) no endpoint "${targetUrl}". Verifique a sua implementação para aceitar o payload JSON completo ou configure o caminho correto.`
+        });
+      }
+    } catch (err: any) {
+      setApiTestMessage({
+        success: false,
+        message: err.message || "Erro ao sincronizar dados com o backend remoto."
+      });
+    } finally {
+      setExportingToApi(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setHostStatusMessage(null);
+    try {
+      const response = await fetch("/api/db/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain }),
+      });
+      
+      const text = await response.text();
+      const trimmedText = text.trim();
+      if (
+        trimmedText.startsWith("<!DOCTYPE") || 
+        trimmedText.startsWith("<!doctype") || 
+        trimmedText.startsWith("<html") || 
+        trimmedText.startsWith("<div") || 
+        trimmedText.startsWith("<script")
+      ) {
+        throw new Error("O servidor local respondeu com uma página HTML em vez de dados JSON. Isso pode ocorrer se o servidor backend tiver parado ou crashado.");
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (jsonErr: any) {
+        throw new Error(`Erro ao interpretar resposta como JSON: ${jsonErr.message}`);
+      }
+
+      if (response.ok) {
+        setHostStatusMessage({ success: true, message: data.message });
+      } else {
+        setHostStatusMessage({ success: false, message: data.error || "Falha ao estabelecer ligação." });
+      }
+    } catch (err: any) {
+      setHostStatusMessage({ success: false, message: "Erro de comunicação com o servidor: " + err.message });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setSavingConfig(true);
+    setHostStatusMessage(null);
+    try {
+      const response = await fetch("/api/db/save-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain }),
+      });
+      
+      const text = await response.text();
+      const trimmedText = text.trim();
+      if (
+        trimmedText.startsWith("<!DOCTYPE") || 
+        trimmedText.startsWith("<!doctype") || 
+        trimmedText.startsWith("<html") || 
+        trimmedText.startsWith("<div") || 
+        trimmedText.startsWith("<script")
+      ) {
+        throw new Error("O servidor local respondeu com uma página HTML em vez de dados JSON.");
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (jsonErr: any) {
+        throw new Error(`Erro ao interpretar resposta como JSON: ${jsonErr.message}`);
+      }
+
+      if (response.ok) {
+        setHostStatusMessage({ 
+          success: true, 
+          message: data.message + " A recarregar o sistema em breve..." 
+        });
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        setHostStatusMessage({ success: false, message: data.error || "Erro ao gravar as configurações." });
+      }
+    } catch (err: any) {
+      setHostStatusMessage({ success: false, message: "Erro de comunicação ao gravar: " + err.message });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
 
   // Sync profile editing when currentUser loads or changes
   React.useEffect(() => {
@@ -1184,6 +1479,369 @@ export default function SettingsView({
                     </p>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5.3: Conectividade API & Base de Dados Remota */}
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl border border-slate-200 dark:border-dark-border space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
+                <Wifi size={15} className="text-brand-500 animate-pulse" />
+                <span>Conectividade API & Base de Dados Remota</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                Alterne entre o armazenamento offline 100% local ou ligue o seu ERP a um domínio particular ou servidor privado (VPS, cPanel, Hostinger, Render) de forma segura.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {/* Toggle Mode */}
+              <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Modo de Armazenamento Activo
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setUseRemoteApi(false)}
+                    className={`py-3 px-4 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      !useRemoteApi
+                        ? "bg-brand-50 border-brand-300 text-brand-700 dark:bg-brand-950/20 dark:border-brand-900 dark:text-brand-400 shadow-sm"
+                        : "bg-white dark:bg-dark-surface border-slate-200 dark:border-dark-border text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <Database size={14} />
+                    <div className="text-left">
+                      <p className="font-bold">Modo Local (localStorage)</p>
+                      <p className="text-[9px] font-normal opacity-80 mt-0.5">Persistência direta no seu navegador. Rápido e offline-first.</p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setUseRemoteApi(true)}
+                    className={`py-3 px-4 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      useRemoteApi
+                        ? "bg-brand-50 border-brand-300 text-brand-700 dark:bg-brand-950/20 dark:border-brand-900 dark:text-brand-400 shadow-sm"
+                        : "bg-white dark:bg-dark-surface border-slate-200 dark:border-dark-border text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <Link2 size={14} />
+                    <div className="text-left">
+                      <p className="font-bold">Modo Remoto (Domínio Particular)</p>
+                      <p className="text-[9px] font-normal opacity-80 mt-0.5">Sincronização com base de dados externa via domínio ou IP privado (/api/db).</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {useRemoteApi && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1.5 md:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                        URL Base do Servidor API / Domínio Particular
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={customApiUrl}
+                          onChange={(e) => setCustomApiUrl(e.target.value)}
+                          placeholder="Ex: https://erp.oseudominio.com/api/db"
+                          className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                        <span>Chave / Token JWT</span>
+                        <span className="text-[9px] font-normal text-slate-400 font-sans bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">Opcional</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="password"
+                          value={customApiToken}
+                          onChange={(e) => setCustomApiToken(e.target.value)}
+                          placeholder="Ex: Bearer eyJhbGci..."
+                          className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <p className="text-[10px] text-slate-400 mt-1 font-medium leading-relaxed">
+                    Indique o endpoint principal do servidor (padrão de rede do ERP: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-brand-600 font-mono">/api/db</code>). Pode configurar uma URL absoluta para outro servidor externo e passar chaves de autenticação JWT/Bearer no cabeçalho.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-900/20 p-4 rounded-xl border border-slate-150 dark:border-dark-border">
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                        Caminho de Leitura (GET)
+                      </label>
+                      <input
+                        type="text"
+                        value={customGetPath}
+                        onChange={(e) => setCustomGetPath(e.target.value)}
+                        placeholder="/get"
+                        className="w-full text-xs bg-white dark:bg-dark-surface border border-slate-200 dark:border-dark-border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                      <p className="text-[10px] text-slate-400 font-mono break-all mt-1">
+                        GET final: <span className="text-brand-600 dark:text-brand-400 font-bold">{(customApiUrl.endsWith("/") ? customApiUrl.slice(0, -1) : customApiUrl) + (customGetPath.startsWith("/") ? customGetPath : `/${customGetPath}`)}</span>
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                        Caminho de Escrita (POST)
+                      </label>
+                      <input
+                        type="text"
+                        value={customSavePath}
+                        onChange={(e) => setCustomSavePath(e.target.value)}
+                        placeholder="/save"
+                        className="w-full text-xs bg-white dark:bg-dark-surface border border-slate-200 dark:border-dark-border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                      <p className="text-[10px] text-slate-400 font-mono break-all mt-1">
+                        POST final: <span className="text-brand-600 dark:text-brand-400 font-bold">{(customApiUrl.endsWith("/") ? customApiUrl.slice(0, -1) : customApiUrl) + (customSavePath.startsWith("/") ? customSavePath : `/${customSavePath}`)}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {apiTestMessage && (
+                    <div className={`p-3.5 rounded-xl border text-xs font-medium animate-fade-in ${
+                      apiTestMessage.success
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+                        : "bg-red-500/10 border-red-500/20 text-red-800 dark:text-red-300"
+                    }`}>
+                      <div className="flex items-start gap-2.5">
+                        <div className={`mt-0.5 p-1 rounded-full ${apiTestMessage.success ? "bg-emerald-500/20 text-emerald-600" : "bg-red-500/20 text-red-600"}`}>
+                          {apiTestMessage.success ? <Check size={14} /> : <AlertCircle size={14} />}
+                        </div>
+                        <div>
+                          <p className="font-bold flex items-center gap-1.5">
+                            <span>{apiTestMessage.success ? "🟢 ONLINE - Ligação Concluída" : "🔴 OFFLINE - Erro de Conexão"}</span>
+                          </p>
+                          <p className="text-[10px] opacity-90 mt-1 font-sans leading-relaxed">{apiTestMessage.message}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleTestApiConnection}
+                      disabled={testingApiConnection || exportingToApi || !customApiUrl}
+                      className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 dark:border-dark-border text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer active:scale-98"
+                    >
+                      {testingApiConnection ? (
+                        <span className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <RefreshCw size={14} className="text-slate-500 animate-spin-slow" />
+                      )}
+                      <span>{testingApiConnection ? "A verificar..." : "Testar Conexão"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleExportToApi}
+                      disabled={testingApiConnection || exportingToApi || !customApiUrl}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-brand-600 text-white hover:bg-brand-700 text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer active:scale-98"
+                    >
+                      {exportingToApi ? (
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <UploadCloud size={14} />
+                      )}
+                      <span>{exportingToApi ? "A sincronizar dados..." : "Sincronizar e Exportar Dados Locais"}</span>
+                    </button>
+                  </div>
+
+                  {/* Guide on how to connect private domain and remote server */}
+                  <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-250 dark:border-dark-border space-y-3">
+                    <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+                      <Globe size={15} className="text-brand-500" />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Guia: Ligar a Base de Dados Remota ao seu Domínio Particular</span>
+                    </div>
+                    
+                    <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2.5 leading-relaxed font-sans">
+                      <p>
+                        Para hospedar a base de dados no seu próprio domínio particular (ex: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-brand-600">erp.empresa.com</code>) de forma robusta e sem limites de timeout do browser, siga estes passos simples:
+                      </p>
+
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <span className="font-bold text-brand-500">1.</span>
+                          <p>
+                            <strong>Hospede a sua API Remota:</strong> Carregue o ficheiro <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">server.js</code> do seu backend para a sua máquina Linux VPS, cPanel ou serviço Cloud (Render, Railway, Hostinger).
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <span className="font-bold text-brand-500">2.</span>
+                          <p>
+                            <strong>Aponte o Domínio DNS:</strong> Na zona DNS do seu domínio principal, crie um registo <strong>A</strong> apontando para o IP público do seu servidor, ou um subdomínio (ex: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">api</code>) do tipo <strong>CNAME</strong>.
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <span className="font-bold text-brand-500">3.</span>
+                          <p>
+                            <strong>Libertar CORS:</strong> Certifique-se de que o seu servidor backend responde com os cabeçalhos de CORS ativos. Na nossa API padrão, o pacote <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">cors</code> já está totalmente configurado e aceita conexões seguras.
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <span className="font-bold text-brand-500">4.</span>
+                          <p>
+                            <strong>Proteja com JWT:</strong> Para segurança absoluta do seu ERP, introduza o token no cabeçalho. O ERP enviará automaticamente como <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">Authorization: Bearer [Seu_Token]</code> em todas as requisições de leitura e escrita.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 5.3.1: Base de Dados do Servidor Central (MySQL / Sincronização Automática) */}
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl border border-slate-200 dark:border-dark-border space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
+                <Database size={15} className="text-brand-500" />
+                <span>Configuração de Base de Dados Remota (MySQL de Alta Performance)</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                O seu servidor central armazena dados em tempo real numa base de dados relacional segura. Configure aqui o acesso direto do servidor ao seu MySQL privado.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Tipo de Banco de Dados</label>
+                  <select
+                    value={dbType}
+                    onChange={(e) => setDbType(e.target.value)}
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-semibold text-slate-700 dark:text-slate-250 cursor-pointer"
+                  >
+                    <option value="mysql">MySQL / MariaDB (Recomendado para Produção/cPanel)</option>
+                    <option value="postgresql">PostgreSQL (Suporte Corporativo)</option>
+                    <option value="sqlite">SQLite (Ficheiro Local - Modo Desenvolvimento)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Host / IP do Servidor MySQL</label>
+                  <input
+                    type="text"
+                    value={dbHost}
+                    onChange={(e) => setDbHost(e.target.value)}
+                    placeholder="Ex: 65.21.252.101"
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Porta</label>
+                  <input
+                    type="text"
+                    value={dbPort}
+                    onChange={(e) => setDbPort(e.target.value)}
+                    placeholder="3306"
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Nome do Banco de Dados</label>
+                  <input
+                    type="text"
+                    value={dbName}
+                    onChange={(e) => setDbName(e.target.value)}
+                    placeholder="Ex: mobitec2_amadje"
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Utilizador do Banco (User)</label>
+                  <input
+                    type="text"
+                    value={dbUser}
+                    onChange={(e) => setDbUser(e.target.value)}
+                    placeholder="Ex: mobitec2_amadje"
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Senha (Password)</label>
+                  <input
+                    type="password"
+                    value={dbPass}
+                    onChange={(e) => setDbPass(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                  />
+                </div>
+              </div>
+
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                Ao clicar em <strong>"Gravar e Criar Tabelas"</strong>, o sistema grava de forma segura estas credenciais no servidor VBSP e corre automaticamente o script de sincronização de tabelas, estruturando os esquemas de dados de forma 100% autónoma.
+              </p>
+
+              {hostStatusMessage && (
+                <div className={`p-3.5 rounded-xl border text-xs font-medium animate-fade-in ${
+                  hostStatusMessage.success
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+                    : "bg-red-500/10 border-red-500/20 text-red-800 dark:text-red-300"
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    <div className={`mt-0.5 p-1 rounded-full ${hostStatusMessage.success ? "bg-emerald-500/20 text-emerald-600" : "bg-red-500/20 text-red-600"}`}>
+                      {hostStatusMessage.success ? <Check size={14} /> : <AlertCircle size={14} />}
+                    </div>
+                    <div>
+                      <p className="font-bold">{hostStatusMessage.success ? "Ligação à BD Estabelecida!" : "Falha na Ligação à BD"}</p>
+                      <p className="text-[10px] opacity-90 mt-0.5">{hostStatusMessage.message}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection || savingConfig}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 dark:border-dark-border text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer active:scale-98"
+                >
+                  {testingConnection ? (
+                    <span className="w-4 h-4 border-2 border-slate-500 border-t-transparent rounded-full animate-spin"></span>
+                  ) : (
+                    <RefreshCw size={14} className="text-slate-500 animate-spin-slow" />
+                  )}
+                  <span>{testingConnection ? "A testar base de dados..." : "Testar Ligação à Base de Dados"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveConfig}
+                  disabled={testingConnection || savingConfig}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer active:scale-98"
+                >
+                  {savingConfig ? (
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  ) : (
+                    <Server size={14} />
+                  )}
+                  <span>{savingConfig ? "A sincronizar e a criar tabelas..." : "Gravar e Criar Tabelas no Servidor"}</span>
+                </button>
               </div>
             </div>
           </div>

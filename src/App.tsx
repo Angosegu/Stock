@@ -58,6 +58,49 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserRole | null>(null);
   const [loadingDb, setLoadingDb] = useState(true);
 
+  // Real-time server connection status (online, offline, sincronizando)
+  const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "sincronizando">("sincronizando");
+
+  // Poll connection status in real-time
+  useEffect(() => {
+    let active = true;
+    let pollInterval: any;
+
+    const checkConnection = async (isFirst = false) => {
+      if (isFirst) {
+        setConnectionStatus("sincronizando");
+      }
+      try {
+        const res = await fetch("/api/db/status");
+        if (!res.ok) throw new Error("Falha no status HTTP");
+        const data = await res.json();
+        if (!active) return;
+
+        if (data && data.success) {
+          setConnectionStatus("online");
+        } else {
+          setConnectionStatus("offline");
+        }
+      } catch (err) {
+        if (!active) return;
+        setConnectionStatus("offline");
+      }
+    };
+
+    // Initial check
+    checkConnection(true);
+
+    // Poll every 8 seconds
+    pollInterval = setInterval(() => {
+      checkConnection(false);
+    }, 8000);
+
+    return () => {
+      active = false;
+      clearInterval(pollInterval);
+    };
+  }, []);
+
   // Persistent System Settings
   const [systemName, setSystemName] = useState(() => localStorage.getItem("vbsp_systemName") || "AMADJE - COMERCIO GERAL");
   const [logoText, setLogoText] = useState(() => localStorage.getItem("vbsp_logoText") || "A");
@@ -271,6 +314,49 @@ export default function App() {
     }
   };
 
+  const getDbEndpoint = (endpointPath: string): string => {
+    const remoteActive = localStorage.getItem("host_useRemoteApi") !== "false";
+    if (!remoteActive) {
+      return `/api/db/${endpointPath}`;
+    }
+
+    const customUrl = (localStorage.getItem("host_customApiUrl") || "").trim();
+    
+    // If it's empty, contains the legacy domain, or is not an absolute URL (doesn't start with http/https), return default local path
+    if (!customUrl || customUrl.includes("api.amadje.com") || (!customUrl.startsWith("http://") && !customUrl.startsWith("https://"))) {
+      return `/api/db/${endpointPath}`;
+    }
+
+    // It is a valid external absolute URL! Let's build the endpoint cleanly.
+    const cleanUrl = customUrl.endsWith("/") ? customUrl.slice(0, -1) : customUrl;
+    
+    let customPath = endpointPath === "get"
+      ? (localStorage.getItem("host_customGetPath") || "").trim()
+      : (localStorage.getItem("host_customSavePath") || "").trim();
+
+    // Reset legacy relative paths to default paths for external URL
+    if (!customPath || customPath === "/api/db/get" || customPath === "api/db/get" || customPath === "/get") {
+      customPath = "/get";
+    } else if (customPath === "/api/db/save" || customPath === "api/db/save" || customPath === "/save") {
+      customPath = "/save";
+    }
+
+    const cleanPath = customPath.startsWith("/") ? customPath : `/${customPath}`;
+    return `${cleanUrl}${cleanPath}`;
+  };
+
+  const getCustomHeaders = (baseHeaders: Record<string, string> = {}): Record<string, string> => {
+    const headers = { ...baseHeaders };
+    const remoteActive = localStorage.getItem("host_useRemoteApi") !== "false";
+    if (remoteActive) {
+      const token = localStorage.getItem("host_customApiToken");
+      if (token && token.trim()) {
+        headers["Authorization"] = `Bearer ${token.trim()}`;
+      }
+    }
+    return headers;
+  };
+
   // Load database from server on mount (local server-side JSON database)
   useEffect(() => {
     let active = true;
@@ -285,6 +371,48 @@ export default function App() {
         return;
       }
 
+      // Check if remote persistence is enabled
+      const remoteActive = localStorage.getItem("host_useRemoteApi") !== "false";
+      if (!remoteActive) {
+        console.log("Modo Local (localStorage) activo. A ler dados do navegador...");
+        
+        try {
+          const storedItems = localStorage.getItem("vbsp_items");
+          const storedMovements = localStorage.getItem("vbsp_movements");
+          const storedInvoices = localStorage.getItem("vbsp_invoices");
+          const storedWarehouses = localStorage.getItem("vbsp_warehouses");
+          const storedUsers = localStorage.getItem("vbsp_users");
+          const storedUserPasswords = localStorage.getItem("vbsp_userPasswords");
+
+          if (storedItems) setItems(JSON.parse(storedItems));
+          if (storedMovements) setMovements(JSON.parse(storedMovements));
+          if (storedInvoices) setInvoices(JSON.parse(storedInvoices));
+          if (storedWarehouses) setWarehouses(JSON.parse(storedWarehouses));
+          if (storedUsers) setUsers(JSON.parse(storedUsers));
+          if (storedUserPasswords) setUserPasswords(JSON.parse(storedUserPasswords));
+
+          if (localStorage.getItem("vbsp_companyName")) setCompanyName(localStorage.getItem("vbsp_companyName") || "");
+          if (localStorage.getItem("vbsp_nif")) setNif(localStorage.getItem("vbsp_nif") || "");
+          if (localStorage.getItem("vbsp_taxRegime")) setTaxRegime(localStorage.getItem("vbsp_taxRegime") || "simplificado");
+          if (localStorage.getItem("vbsp_systemName")) setSystemName(localStorage.getItem("vbsp_systemName") || "AMADJE ERP");
+          if (localStorage.getItem("vbsp_logoText")) setLogoText(localStorage.getItem("vbsp_logoText") || "AMADJE");
+          if (localStorage.getItem("vbsp_systemColor")) setSystemColor(localStorage.getItem("vbsp_systemColor") || "blue");
+          if (localStorage.getItem("vbsp_language")) setLanguage(localStorage.getItem("vbsp_language") || "PT");
+          if (localStorage.getItem("vbsp_skuMode")) setSkuMode(localStorage.getItem("vbsp_skuMode") || "automatico");
+          if (localStorage.getItem("vbsp_defaultMinStock")) setDefaultMinStock(Number(localStorage.getItem("vbsp_defaultMinStock")) || 5);
+          if (localStorage.getItem("vbsp_autoBackup")) setAutoBackup(localStorage.getItem("vbsp_autoBackup") === "true");
+          if (localStorage.getItem("vbsp_categories")) setCategories(JSON.parse(localStorage.getItem("vbsp_categories") || "[]"));
+          if (localStorage.getItem("vbsp_units")) setUnits(JSON.parse(localStorage.getItem("vbsp_units") || "[]"));
+        } catch (e) {
+          console.error("Erro ao carregar dados locais do localStorage:", e);
+        }
+
+        if (active) {
+          setLoadingDb(false);
+        }
+        return;
+      }
+
       // 2. Set up an AbortController with a 1.2s timeout to prevent hanging if the backend does not answer or is offline
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
@@ -292,14 +420,35 @@ export default function App() {
       }, 1200);
 
       try {
-        const response = await fetch("/api/db/get", { signal: controller.signal });
+        const response = await fetch(getDbEndpoint("get"), { 
+          signal: controller.signal,
+          headers: getCustomHeaders()
+        });
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          throw new Error(`Resposta HTTP inválida: ${response.status}`);
+          throw new Error(`Resposta HTTP inválida (${response.status}) ao aceder à base de dados.`);
         }
 
-        const data = await response.json();
+        const text = await response.text();
+        const trimmedText = text.trim();
+        if (
+          trimmedText.startsWith("<!DOCTYPE") || 
+          trimmedText.startsWith("<!doctype") || 
+          trimmedText.startsWith("<html") || 
+          trimmedText.startsWith("<div") || 
+          trimmedText.startsWith("<script")
+        ) {
+          throw new Error("O servidor respondeu com uma página HTML em vez de dados JSON válidos. Verifique se o URL e caminhos configurados em Definições estão corretos.");
+        }
+
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (jsonErr: any) {
+          throw new Error(`Erro ao interpretar os dados como JSON: ${jsonErr.message}`);
+        }
+
         if (!active) return;
 
         if (data && !data.empty) {
@@ -363,15 +512,15 @@ export default function App() {
           };
 
           // Save to server to initialize it
-          await fetch("/api/db/save", {
+          await fetch(getDbEndpoint("save"), {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: getCustomHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify(initialDbState)
           });
         }
       } catch (err) {
         clearTimeout(timeoutId);
-        console.error("Falha ao sincronizar com a base de dados do servidor, usando dados locais offline:", err);
+        console.warn("Falha ao sincronizar com a base de dados do servidor, usando dados locais offline:", err);
       } finally {
         if (active) {
           setLoadingDb(false);
@@ -388,10 +537,36 @@ export default function App() {
   // Automatically save state to server local database whenever it is updated
   useEffect(() => {
     if (loadingDb) return; // Wait until initial load is complete!
+
+    // Always save to localStorage as local backup/mode persistence
+    localStorage.setItem("vbsp_items", JSON.stringify(items));
+    localStorage.setItem("vbsp_movements", JSON.stringify(movements));
+    localStorage.setItem("vbsp_invoices", JSON.stringify(invoices));
+    localStorage.setItem("vbsp_warehouses", JSON.stringify(warehouses));
+    localStorage.setItem("vbsp_users", JSON.stringify(users));
+    localStorage.setItem("vbsp_userPasswords", JSON.stringify(userPasswords));
+    
+    localStorage.setItem("vbsp_systemName", systemName);
+    localStorage.setItem("vbsp_logoText", logoText);
+    localStorage.setItem("vbsp_systemColor", systemColor);
+    localStorage.setItem("vbsp_language", language);
+    localStorage.setItem("vbsp_skuMode", skuMode);
+    localStorage.setItem("vbsp_defaultMinStock", String(defaultMinStock));
+    localStorage.setItem("vbsp_autoBackup", String(autoBackup));
+    localStorage.setItem("vbsp_categories", JSON.stringify(categories));
+    localStorage.setItem("vbsp_units", JSON.stringify(units));
+    localStorage.setItem("vbsp_companyName", companyName);
+    localStorage.setItem("vbsp_nif", nif);
+    localStorage.setItem("vbsp_taxRegime", taxRegime);
+
     if (window.location.protocol === "file:") return; // Bypass API save on local packaged offline files
+
+    const remoteActive = localStorage.getItem("host_useRemoteApi") !== "false";
+    if (!remoteActive) return; // Bypass API save when in local storage mode!
 
     const saveTimeout = setTimeout(async () => {
       try {
+        setConnectionStatus("sincronizando");
         const dbState = {
           items,
           movements,
@@ -416,13 +591,25 @@ export default function App() {
           }
         };
 
-        await fetch("/api/db/save", {
+        const response = await fetch(getDbEndpoint("save"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getCustomHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(dbState)
         });
+
+        if (response.ok) {
+          const resData = await response.json();
+          if (resData && resData.fallbackLocal) {
+            setConnectionStatus("offline");
+          } else {
+            setConnectionStatus("online");
+          }
+        } else {
+          setConnectionStatus("offline");
+        }
       } catch (err) {
-        console.error("Erro ao guardar dados no servidor:", err);
+        console.warn("Erro ao guardar dados no servidor:", err);
+        setConnectionStatus("offline");
       }
     }, 500); // 500ms debounce to prevent spamming saving requests on fast sequential operations
 
@@ -932,7 +1119,25 @@ export default function App() {
         body: JSON.stringify({ stockItems: items })
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      const trimmedText = text.trim();
+      if (
+        trimmedText.startsWith("<!DOCTYPE") || 
+        trimmedText.startsWith("<!doctype") || 
+        trimmedText.startsWith("<html") || 
+        trimmedText.startsWith("<div") || 
+        trimmedText.startsWith("<script")
+      ) {
+        throw new Error("O servidor retornou uma página HTML em vez de JSON. Verifique se a API local está a correr corretamente.");
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (jsonErr: any) {
+        throw new Error(`Erro ao interpretar os dados da auditoria como JSON: ${jsonErr.message}`);
+      }
+
       if (!response.ok || !data.success) {
         throw new Error(data.error || "Erro ao efetuar auditoria remota.");
       }
@@ -1359,12 +1564,29 @@ export default function App() {
         {/* SYSTEM STATUS FOOTER */}
         <footer className="h-10 bg-white dark:bg-dark-surface border-t border-slate-200 dark:border-dark-border px-8 flex items-center justify-between flex-shrink-0 text-[10px] text-slate-400 font-medium transition-colors">
           <p>AMADJE ERP Enterprise v2.4.0 (Windows Desktop Runtime)</p>
-          <div className="flex items-center gap-4">
-            <span>Base de Dados: Local (SQLite)</span>
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Sincronizado</span>
-            </span>
+          <div className="flex items-center gap-6">
+            <span className="text-slate-500 dark:text-slate-400">Conexão Servidor (65.21.252.101):</span>
+            
+            {connectionStatus === "online" && (
+              <span className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Online</span>
+              </span>
+            )}
+
+            {connectionStatus === "offline" && (
+              <span className="flex items-center gap-1.5 font-semibold text-rose-600 dark:text-rose-400">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                <span>Offline</span>
+              </span>
+            )}
+
+            {connectionStatus === "sincronizando" && (
+              <span className="flex items-center gap-1.5 font-semibold text-amber-600 dark:text-amber-400">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                <span>Sincronizando</span>
+              </span>
+            )}
           </div>
         </footer>
 

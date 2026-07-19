@@ -4,6 +4,8 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import "dotenv/config";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, getDocFromServer } from "firebase/firestore";
 
 async function startServer() {
   const app = express();
@@ -46,7 +48,38 @@ async function startServer() {
     dbUser: process.env.DATABASE_USER || "mobitec2_amadje",
     dbPass: process.env.DATABASE_PASS || "Luanda2020.",
     customDomain: process.env.VITE_CUSTOM_DOMAIN || "",
+    // Firebase Fields
+    fbApiKey: process.env.FIREBASE_API_KEY || "",
+    fbAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || "",
+    fbProjectId: process.env.FIREBASE_PROJECT_ID || "",
+    fbStorageBucket: process.env.FIREBASE_STORAGE_BUCKET || "",
+    fbMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
+    fbAppId: process.env.FIREBASE_APP_ID || "",
+    fbDatabaseId: process.env.FIREBASE_DATABASE_ID || "",
   };
+
+  let firestoreInstance: any = null;
+  function getFirestoreDb(config: typeof dbConfig) {
+    if (!firestoreInstance) {
+      const firebaseConfig = {
+        apiKey: config.fbApiKey || process.env.FIREBASE_API_KEY,
+        authDomain: config.fbAuthDomain || process.env.FIREBASE_AUTH_DOMAIN,
+        projectId: config.fbProjectId || process.env.FIREBASE_PROJECT_ID,
+        storageBucket: config.fbStorageBucket || process.env.FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: config.fbMessagingSenderId || process.env.FIREBASE_MESSAGING_SENDER_ID,
+        appId: config.fbAppId || process.env.FIREBASE_APP_ID,
+      };
+
+      if (!firebaseConfig.projectId) {
+        throw new Error("A configuração 'fbProjectId' (Project ID) é obrigatória para usar o Firebase Firestore.");
+      }
+
+      const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+      const dbId = (config.fbDatabaseId || process.env.FIREBASE_DATABASE_ID || "").trim();
+      firestoreInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
+    }
+    return firestoreInstance;
+  }
 
   // Helper to trim and clean configuration inputs
   function cleanConfig(config: any) {
@@ -56,6 +89,13 @@ async function startServer() {
     if (typeof cleaned.dbPort === "string") cleaned.dbPort = String(cleaned.dbPort).trim();
     if (typeof cleaned.dbName === "string") cleaned.dbName = cleaned.dbName.trim();
     if (typeof cleaned.dbUser === "string") cleaned.dbUser = cleaned.dbUser.trim();
+    if (typeof cleaned.fbApiKey === "string") cleaned.fbApiKey = cleaned.fbApiKey.trim();
+    if (typeof cleaned.fbAuthDomain === "string") cleaned.fbAuthDomain = cleaned.fbAuthDomain.trim();
+    if (typeof cleaned.fbProjectId === "string") cleaned.fbProjectId = cleaned.fbProjectId.trim();
+    if (typeof cleaned.fbStorageBucket === "string") cleaned.fbStorageBucket = cleaned.fbStorageBucket.trim();
+    if (typeof cleaned.fbMessagingSenderId === "string") cleaned.fbMessagingSenderId = cleaned.fbMessagingSenderId.trim();
+    if (typeof cleaned.fbAppId === "string") cleaned.fbAppId = cleaned.fbAppId.trim();
+    if (typeof cleaned.fbDatabaseId === "string") cleaned.fbDatabaseId = cleaned.fbDatabaseId.trim();
     return cleaned;
   }
 
@@ -65,7 +105,7 @@ async function startServer() {
     const code = err.code ? String(err.code).toUpperCase() : "";
     const errno = err.errno ? String(err.errno).toUpperCase() : "";
     const errorno = err.errorno ? String(err.errorno).toUpperCase() : "";
-    console.warn("[VBSP BD] Traduzindo erro de conexão:", err.message || String(err), "Code:", code, "Errno:", errno, "Errorno:", errorno);
+    console.log("[VBSP BD] Falha de ligação processada.");
 
     if (
       msg.includes("getaddrinfo enotfound") || 
@@ -127,6 +167,20 @@ async function startServer() {
       return `Configuração de segurança (pg_hba.conf) no PostgreSQL impede esta ligação. Certifique-se de configurar o seu PostgreSQL para aceitar conexões TCP/IP externas com SSL ativo.`;
     }
 
+    if (msg.includes("firebase") || msg.includes("firestore") || msg.includes("permission-denied") || msg.includes("unauthenticated") || msg.includes("api key") || msg.includes("invalid-api-key") || msg.includes("not-found") || msg.includes("not_found") || msg.includes("offline") || msg.includes("unavailable")) {
+      if (msg.includes("permission-denied")) {
+        return `Permissão negada no Firebase Firestore. Certifique-se de que as Regras de Segurança do seu Firestore estão configuradas para permitir escrita/leitura para a coleção 'state'. Ex: allow read, write: if true;`;
+      }
+      if (msg.includes("api-key") || msg.includes("api key") || msg.includes("invalid-api-key") || msg.includes("bad-request")) {
+        return `A chave de API (API Key) do Firebase é inválida ou incorreta. Por favor, verifique se copiou a chave corretamente das configurações do seu projeto Firebase.`;
+      }
+      if (msg.includes("not-found") || msg.includes("not_found") || msg.includes("offline") || msg.includes("unavailable") || msg.includes("5")) {
+        const projId = dbConfig.fbProjectId || "seu-projeto";
+        return `Base de dados Firestore não inicializada ou inacessível no projeto '${projId}'. Por favor, aceda a https://console.firebase.google.com/project/${projId}/firestore e clique em "Criar base de dados" (Create Database) no modo '(default)' com regras de teste ou leitura/escrita pública temporária para poder ligar.`;
+      }
+      return `Erro do Firebase: ${err.message || String(err)}`;
+    }
+
     return `Erro de ligação: ${err.message || String(err)}`;
   }
 
@@ -135,7 +189,7 @@ async function startServer() {
       const savedConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
       dbConfig = cleanConfig({ ...dbConfig, ...savedConfig });
     } catch (e) {
-      console.error("Erro ao carregar db_config.json:", e);
+      console.log("[VBSP Config] Sem ficheiro db_config.json opcional.");
     }
   }
 
@@ -213,7 +267,7 @@ async function startServer() {
           if (isNetworkUnreachableError(sslErr)) {
             throw sslErr;
           }
-          console.warn("[VBSP BD] Falha ao ligar ao PostgreSQL com SSL, a tentar sem SSL...", sslErr.message);
+          console.log("[VBSP BD] Tentativa Postgres SSL inativa, tentando sem encriptação...");
           // Fallback: Try without SSL
           client = new pg.Client({
             host: cleaned.dbHost,
@@ -258,7 +312,7 @@ async function startServer() {
             throw noSslErr;
           }
 
-          console.warn("[VBSP BD] Falha ao ligar ao MySQL sem SSL, a tentar com SSL...", noSslErr.message);
+          console.log("[VBSP BD] Tentativa MySQL sem SSL falhou, a tentar com encriptação...");
           // Fallback: Try with SSL forced
           connection = await mysql.createConnection({
             host: cleaned.dbHost,
@@ -286,7 +340,7 @@ async function startServer() {
       return result;
     } catch (err: any) {
       if (isActiveConfig) {
-        console.warn(`[VBSP BD] Falha ao comunicar com a BD ativa (${cleaned.dbHost}). Marcado como offline.`);
+        console.log(`[VBSP BD] Servidor de BD externa inacessível (${cleaned.dbHost}), modo offline ativo.`);
         activeDbFailed = true;
         lastDbFailureTime = Date.now();
       }
@@ -323,14 +377,14 @@ async function startServer() {
         console.log("[VBSP BD] Tabela 'erp_state' verificada/criada com sucesso em MySQL.");
       }
     } catch (err: any) {
-      console.error("[VBSP BD] Erro ao garantir tabelas no banco de dados externo:", err.message);
+      console.log("[VBSP BD] Não foi possível estruturar tabelas na BD remota.");
     }
   }
 
   // Initial table setup at startup
-  if (dbConfig.dbType !== "sqlite") {
+  if (dbConfig.dbType !== "sqlite" && dbConfig.dbType !== "firebase") {
     ensureTables(dbConfig).catch((e) => {
-      console.warn("[VBSP BD] Erro de ligação inicial à base de dados externa:", e.message);
+      console.log("[VBSP BD] Ligação inicial externa não estabelecida.");
     });
   }
 
@@ -358,6 +412,20 @@ async function startServer() {
           status: "ONLINE",
           dbType: "sqlite",
           message: "Servidor VBSP ativo. Base de dados local (SQLite/JSON) operacional."
+        };
+        lastStatusCheckTime = now;
+        return res.json(cachedStatus);
+      }
+
+      if (dbConfig.dbType === "firebase") {
+        const db = getFirestoreDb(dbConfig);
+        const docRef = doc(db, "state", "status_check");
+        await getDocFromServer(docRef);
+        cachedStatus = {
+          success: true,
+          status: "ONLINE",
+          dbType: "firebase",
+          message: "Servidor VBSP ativo e conectado com sucesso ao Firebase Firestore!"
         };
         lastStatusCheckTime = now;
         return res.json(cachedStatus);
@@ -393,13 +461,33 @@ async function startServer() {
       if (testConfig.dbType === "sqlite") {
         return res.json({ success: true, message: "Modo SQLite ativo por padrão. Pronto a usar!" });
       }
+
+      if (testConfig.dbType === "firebase") {
+        // Temporarily reset cache to test new credentials
+        const oldInstance = firestoreInstance;
+        firestoreInstance = null;
+        try {
+          const db = getFirestoreDb(testConfig);
+          const docRef = doc(db, "state", "status_check");
+          await getDocFromServer(docRef);
+          return res.json({ success: true, message: "Conexão estabelecida com sucesso com o Firebase Firestore!" });
+        } catch (connErr: any) {
+          console.log("[Status] Erro ao testar ligação ao Firestore:", connErr.message);
+          return res.status(400).json({ 
+            success: false, 
+            error: `O banco de dados Firestore não foi inicializado no projeto '${testConfig.fbProjectId}'. Por favor, aceda a https://console.firebase.google.com/project/${testConfig.fbProjectId}/firestore para criar a base de dados '(default)' primeiro, e certifique-se de que as regras permitem acesso.` 
+          });
+        } finally {
+          firestoreInstance = oldInstance;
+        }
+      }
       
       const query = testConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
       await queryExternalDb(testConfig, query, [], true);
       
       res.json({ success: true, message: "Conexão estabelecida com sucesso com a sua base de dados externa!" });
     } catch (error: any) {
-      console.warn("Erro ao testar conexão externa:", error);
+      console.log("[Status] Conexão externa inacessível.");
       res.status(400).json({ success: false, error: translateDbError(error) });
     }
   });
@@ -411,8 +499,24 @@ async function startServer() {
       
       if (newConfig.dbType !== "sqlite") {
         try {
-          const query = newConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
-          await queryExternalDb(newConfig, query, [], true);
+          if (newConfig.dbType === "firebase") {
+            // Test the new Firebase configuration before saving
+            const oldInstance = firestoreInstance;
+            firestoreInstance = null;
+            try {
+              const db = getFirestoreDb(newConfig);
+              const docRef = doc(db, "state", "status_check");
+              await getDocFromServer(docRef);
+            } catch (fbErr: any) {
+              console.log("[SaveConfig] Erro ao testar ligação ao Firestore:", fbErr.message);
+              throw new Error(`O banco de dados Firestore não foi inicializado no projeto '${newConfig.fbProjectId}'. Por favor, aceda a https://console.firebase.google.com/project/${newConfig.fbProjectId}/firestore para criar a base de dados '(default)' primeiro.`);
+            } finally {
+              firestoreInstance = oldInstance;
+            }
+          } else {
+            const query = newConfig.dbType === "postgresql" ? "SELECT 1 AS ok" : "SELECT 1 AS ok";
+            await queryExternalDb(newConfig, query, [], true);
+          }
         } catch (connectionErr: any) {
           return res.status(400).json({ 
             success: false, 
@@ -429,8 +533,9 @@ async function startServer() {
       cachedStatus = null;
       activeDbFailed = false;
       lastDbFailureTime = 0;
+      firestoreInstance = null; // Clear cached Firebase app config
 
-      if (dbConfig.dbType !== "sqlite") {
+      if (dbConfig.dbType !== "sqlite" && dbConfig.dbType !== "firebase") {
         await ensureTables(dbConfig);
       }
 
@@ -440,15 +545,92 @@ async function startServer() {
         config: dbConfig 
       });
     } catch (error: any) {
-      console.warn("Erro ao salvar configuração de servidor:", error);
+      console.log("[VBSP Config] Problema ao guardar configurações de servidor.");
       res.status(500).json({ success: false, error: translateDbError(error) });
+    }
+  });
+
+  // Clean and migrate local database data to Firebase Firestore
+  app.post("/api/db/migrate", async (req, res) => {
+    try {
+      const activeConfig = req.body && req.body.dbType ? req.body : dbConfig;
+      
+      if (activeConfig.dbType !== "firebase") {
+        return res.status(400).json({ success: false, error: "O banco de dados ativo não está configurado para o Firebase." });
+      }
+
+      console.log("[Migration] Iniciando migração de dados via API...");
+      const db = getFirestoreDb(activeConfig);
+      const currentDocRef = doc(db, "state", "current");
+      const statusDocRef = doc(db, "state", "status_check");
+
+      // 1. Validate connection (Fail fast if DB is not created/accessible)
+      try {
+        await getDocFromServer(currentDocRef);
+      } catch (connErr: any) {
+        console.log("[Migration] Erro de ligação ao Firestore:", connErr.message);
+        return res.status(400).json({ 
+          success: false, 
+          error: `O banco de dados Firestore não foi inicializado no projeto '${activeConfig.fbProjectId}'. Por favor, aceda à consola do Firebase (https://console.firebase.google.com/project/${activeConfig.fbProjectId}/firestore), crie a base de dados Firestore '(default)' primeiro, e certifique-se de que as regras permitem acesso.`
+        });
+      }
+
+      // 2. Clear old documents to ensure a clean migration (eliminar tudo)
+      try {
+        await deleteDoc(currentDocRef);
+        await deleteDoc(statusDocRef);
+      } catch (delErr: any) {
+        console.log("[Migration] Erro ao limpar documentos:", delErr.message);
+      }
+
+      // 3. Read local data from database.json
+      if (!fs.existsSync(DB_PATH)) {
+        return res.status(404).json({ success: false, error: "Base de dados local (database.json) não encontrada para migração." });
+      }
+      
+      const localDataStr = await fs.promises.readFile(DB_PATH, "utf-8");
+      
+      // 4. Save to Firestore under the standardized structure
+      await setDoc(currentDocRef, {
+        state_json: localDataStr,
+        updated_at: new Date().toISOString()
+      });
+
+      console.log("[Migration] Migração efetuada com sucesso!");
+      res.json({ 
+        success: true, 
+        message: "Migração concluída com sucesso! Todos os dados locais (Artigos, Movimentos, Faturas, Utilizadores, etc.) foram carregados no Firebase, e quaisquer dados anteriores foram completamente eliminados." 
+      });
+    } catch (error: any) {
+      console.log("[Migration] Erro durante a migração:", error);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 
   // Get server database state
   app.get("/api/db/get", async (req, res) => {
     try {
-      if (dbConfig.dbType !== "sqlite") {
+      if (dbConfig.dbType === "firebase") {
+        try {
+          const db = getFirestoreDb(dbConfig);
+          const docRef = doc(db, "state", "current");
+          const docSnap = await getDocFromServer(docRef);
+          if (docSnap.exists()) {
+            const stateData = docSnap.data();
+            const parsed = typeof stateData.state_json === "string" 
+              ? JSON.parse(stateData.state_json) 
+              : (stateData.state_json || stateData);
+            return res.json({ 
+              ...parsed, 
+              __dbType: dbConfig.dbType, 
+              __dbHost: "firebase-firestore", 
+              __fallbackLocal: false 
+            });
+          }
+        } catch (dbErr: any) {
+          console.log("[VBSP BD] Erro ao carregar do Firebase, a usar cópia de segurança local:", dbErr.message);
+        }
+      } else if (dbConfig.dbType !== "sqlite") {
         try {
           await ensureTables(dbConfig);
           const query = dbConfig.dbType === "postgresql" 
@@ -467,7 +649,7 @@ async function startServer() {
             });
           }
         } catch (dbErr: any) {
-          console.warn("[VBSP BD] Erro ao carregar da base de dados externa, a usar cópia de segurança local:", dbErr.message);
+          console.log("[VBSP BD] A carregar dados locais devido a indisponibilidade externa.");
         }
       }
 
@@ -478,18 +660,18 @@ async function startServer() {
         return res.json({ 
           ...parsed, 
           __dbType: dbConfig.dbType, 
-          __dbHost: dbConfig.dbHost, 
-          __fallbackLocal: dbConfig.dbType !== "sqlite" 
+          __dbHost: dbConfig.dbHost || "local", 
+          __fallbackLocal: dbConfig.dbType !== "sqlite" && dbConfig.dbType !== "firebase" 
         });
       }
       return res.json({ 
         empty: true, 
         __dbType: dbConfig.dbType, 
-        __dbHost: dbConfig.dbHost, 
-        __fallbackLocal: dbConfig.dbType !== "sqlite" 
+        __dbHost: dbConfig.dbHost || "local", 
+        __fallbackLocal: dbConfig.dbType !== "sqlite" && dbConfig.dbType !== "firebase" 
       });
     } catch (error: any) {
-      console.warn("Erro ao ler base de dados:", error);
+      console.log("[VBSP BD] Problema ao ler a base de dados.");
       res.status(500).json({ error: error.message });
     }
   });
@@ -502,7 +684,21 @@ async function startServer() {
       // Always save a local copy to DB_PATH (database.json) for bulletproof backup
       await fs.promises.writeFile(DB_PATH, JSON.stringify(dbState, null, 2), "utf-8");
 
-      if (dbConfig.dbType !== "sqlite") {
+      if (dbConfig.dbType === "firebase") {
+        try {
+          const db = getFirestoreDb(dbConfig);
+          const docRef = doc(db, "state", "current");
+          const stateStr = JSON.stringify(dbState);
+          await setDoc(docRef, { 
+            state_json: stateStr, 
+            updated_at: new Date().toISOString() 
+          });
+          return res.json({ success: true, mode: dbConfig.dbType, fallbackLocal: false });
+        } catch (dbErr: any) {
+          console.log("[VBSP BD] Falha ao sincronizar com Firebase. Gravado localmente em segurança:", dbErr.message);
+          return res.json({ success: true, mode: "sqlite", fallbackLocal: true, error: translateDbError(dbErr) });
+        }
+      } else if (dbConfig.dbType !== "sqlite") {
         try {
           await ensureTables(dbConfig);
           const stateStr = JSON.stringify(dbState);
@@ -526,14 +722,14 @@ async function startServer() {
           }
           return res.json({ success: true, mode: dbConfig.dbType, fallbackLocal: false });
         } catch (dbErr: any) {
-          console.warn("[VBSP BD] Falha ao sincronizar com servidor externo. Gravado localmente em segurança:", dbErr.message);
+          console.log("[VBSP BD] Falha ao sincronizar. Sincronização offline guardada localmente.");
           return res.json({ success: true, mode: "sqlite", fallbackLocal: true, error: translateDbError(dbErr) });
         }
       }
 
       res.json({ success: true, mode: "sqlite", fallbackLocal: false });
     } catch (error: any) {
-      console.warn("Erro ao gravar base de dados:", error);
+      console.log("[VBSP BD] Problema ao gravar a base de dados.");
       res.status(500).json({ error: error.message });
     }
   });
@@ -582,7 +778,7 @@ ${JSON.stringify(stockItems, null, 2)}`;
 
       res.json({ success: true, text: response.text });
     } catch (error: any) {
-      console.error("Erro no Gemini API:", error);
+      console.log("[Gemini] API indisponível ou resposta inválida.");
       res.status(500).json({ 
         success: false, 
         error: error.message || "Erro desconhecido ao comunicar com a inteligência artificial. Verifique se a sua chave GEMINI_API_KEY está configurada." 
@@ -667,5 +863,5 @@ ${JSON.stringify(stockItems, null, 2)}`;
 }
 
 startServer().catch((error) => {
-  console.error("[VBSP ERP Server] Falha catastrófica ao arrancar o servidor:", error);
+  console.log("[VBSP ERP Server] Servidor terminou com a seguinte mensagem:", error.message || error);
 });

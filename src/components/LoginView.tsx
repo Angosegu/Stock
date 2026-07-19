@@ -89,6 +89,29 @@ export default function LoginView({
             <p className="text-xs text-slate-400">Introduza as suas credenciais para gerir o stock.</p>
           </div>
 
+          {(() => {
+            const typedUser = users.find(u => 
+              u.username.toLowerCase() === username.trim().toLowerCase() || 
+              u.email.toLowerCase() === username.trim().toLowerCase()
+            );
+            if (!typedUser) return null;
+            return (
+              <div className="flex flex-col items-center justify-center p-3 bg-slate-800/40 border border-slate-800/60 rounded-xl space-y-2 animate-fade-in">
+                <div className="w-12 h-12 rounded-full bg-brand-500 overflow-hidden flex items-center justify-center font-display font-bold text-base text-white border border-brand-500/20">
+                  {typedUser.avatar && typedUser.avatar.startsWith("data:image/") ? (
+                    <img src={typedUser.avatar} alt={typedUser.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    typedUser.avatar || typedUser.name.substring(0, 2).toUpperCase()
+                  )}
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] font-semibold text-slate-400">Utilizador reconhecido:</p>
+                  <p className="text-xs text-brand-400 font-mono font-bold">{typedUser.name} ({typedUser.role.toUpperCase()})</p>
+                </div>
+              </div>
+            );
+          })()}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             
             {/* Username Input */}

@@ -55,7 +55,22 @@ export default function App() {
   };
 
   // User Access & Role
-  const [currentUser, setCurrentUser] = useState<UserRole | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserRole | null>(() => {
+    const saved = localStorage.getItem("vbsp_currentUser");
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem("vbsp_currentUser", JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem("vbsp_currentUser");
+    }
+  }, [currentUser]);
   const [loadingDb, setLoadingDb] = useState(true);
 
   // Real-time server connection status (online, offline, sincronizando)
@@ -413,11 +428,11 @@ export default function App() {
         return;
       }
 
-      // 2. Set up an AbortController with a 1.2s timeout to prevent hanging if the backend does not answer or is offline
+      // 2. Set up an AbortController with an 8s timeout to prevent hanging if the backend does not answer or is offline
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort();
-      }, 1200);
+      }, 8000);
 
       try {
         const response = await fetch(getDbEndpoint("get"), { 
@@ -457,13 +472,25 @@ export default function App() {
           if (data.movements) setMovements(data.movements);
           if (data.invoices) setInvoices(data.invoices);
           if (data.warehouses) setWarehouses(data.warehouses);
-          if (data.users) setUsers(data.users);
+          if (data.users) {
+            setUsers(data.users);
+            if (currentUser) {
+              const matchedUser = data.users.find((u: any) => u.username === currentUser.username);
+              if (matchedUser) {
+                setCurrentUser(matchedUser);
+              }
+            }
+          }
           if (data.userPasswords) setUserPasswords(data.userPasswords);
           
           if (data.settings) {
             const s = data.settings;
             if (s.systemName) setSystemName(s.systemName);
             if (s.logoText) setLogoText(s.logoText);
+            if (s.logoImage !== undefined) {
+              setLogoImage(s.logoImage);
+              localStorage.setItem("vbsp_logoImage", s.logoImage);
+            }
             if (s.systemColor) setSystemColor(s.systemColor);
             if (s.language) setLanguage(s.language);
             if (s.skuMode) setSkuMode(s.skuMode);
@@ -497,6 +524,7 @@ export default function App() {
             settings: {
               systemName,
               logoText,
+              logoImage,
               systemColor,
               language,
               skuMode,
@@ -577,6 +605,7 @@ export default function App() {
           settings: {
             systemName,
             logoText,
+            logoImage,
             systemColor,
             language,
             skuMode,
@@ -624,6 +653,7 @@ export default function App() {
     userPasswords,
     systemName,
     logoText,
+    logoImage,
     systemColor,
     language,
     skuMode,
@@ -1251,8 +1281,12 @@ export default function App() {
         {/* User Account Info Bottom */}
         <div className="mt-auto p-4 border-t border-slate-800 space-y-2">
           <div className="bg-slate-800/80 rounded-xl p-3 flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center text-white text-xs font-bold font-display uppercase shrink-0">
-              {currentUser?.avatar || "US"}
+            <div className="w-8 h-8 rounded-full bg-brand-500 overflow-hidden flex items-center justify-center text-white text-xs font-bold font-display uppercase shrink-0">
+              {currentUser?.avatar && currentUser.avatar.startsWith("data:image/") ? (
+                <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                currentUser?.avatar || "US"
+              )}
             </div>
             <div className="overflow-hidden flex-1">
               <p className="text-xs font-semibold text-white truncate leading-snug">{currentUser?.name}</p>
@@ -1296,13 +1330,19 @@ export default function App() {
           <div className="flex items-center gap-4">
             {/* Quick search input */}
             <div className="relative hidden md:block">
-              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-                <Search size={14} />
+              <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                {logoImage ? (
+                  <img src={logoImage} alt="Logo" className="w-4 h-4 object-cover rounded-md border border-slate-200 dark:border-slate-700" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-4 h-4 bg-brand-500 rounded-md flex items-center justify-center font-display font-black text-[9px] text-white">
+                    {logoText}
+                  </div>
+                )}
               </span>
               <input 
                 type="text" 
                 placeholder="Pesquisar referências..." 
-                className="bg-slate-50 dark:bg-slate-800 border-none rounded-lg px-3 pl-8 py-1.5 text-xs w-52 focus:outline-hidden focus:ring-2 focus:ring-brand-500 text-slate-800 dark:text-white"
+                className="bg-slate-50 dark:bg-slate-800 border-none rounded-lg px-3 pl-8.5 py-1.5 text-xs w-52 focus:outline-hidden focus:ring-2 focus:ring-brand-500 text-slate-800 dark:text-white"
                 onClick={() => setActiveTab("inventory")}
               />
             </div>

@@ -37,6 +37,10 @@ interface ReportsViewProps {
 }
 
 export default function ReportsView({ movements, items, warehouses }: ReportsViewProps) {
+  const logoImage = localStorage.getItem("vbsp_logoImage") || "";
+  const systemName = localStorage.getItem("vbsp_systemName") || "AMADJE - COMERCIO GERAL";
+  const logoText = localStorage.getItem("vbsp_logoText") || "A";
+
   const [selectedStore, setSelectedStore] = useState<string>("all");
   const [selectedDate, setSelectedDate] = useState<string>("2026-07-05");
   const [activeReportTab, setActiveReportTab] = useState<"daily" | "monthly" | "alerts">("daily");
@@ -639,13 +643,23 @@ export default function ReportsView({ movements, items, warehouses }: ReportsVie
       {/* PRINT-ONLY EXECUTIVE FORMAL REPORT CONTAINER */}
       <div className="print-only print-container">
         {/* Header letterhead */}
-        <div className="flex justify-between items-start border-b-2 border-slate-900 pb-5 mb-6" style={{ contentVisibility: "auto" }}>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 uppercase">AMADJE ERP - RELATÓRIO OPERACIONAL</h1>
-            <p className="text-[10px] text-slate-500 font-medium">SISTEMA INTEGRADO DE GESTÃO DE STOCK E LOGÍSTICA</p>
+        <div className="flex justify-between items-center border-b-2 border-slate-900 pb-5 mb-6" style={{ contentVisibility: "auto" }}>
+          <div className="flex items-center gap-4">
+            {logoImage ? (
+              <img src={logoImage} alt="Logo" className="w-14 h-14 object-cover rounded-lg border border-slate-300 animate-fade-in" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-14 h-14 bg-slate-900 rounded-lg flex items-center justify-center font-display font-black text-xl text-white">
+                {logoText}
+              </div>
+            )}
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-slate-900 uppercase leading-snug">{systemName}</h1>
+              <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">AMADJE ERP - RELATÓRIO OPERACIONAL</p>
+              <p className="text-[9px] text-slate-400 font-medium">SISTEMA INTEGRADO DE GESTÃO DE STOCK E LOGÍSTICA</p>
+            </div>
           </div>
           <div className="text-right text-xs">
-            <p className="font-bold">DATA DE EMISSÃO: {selectedDate}</p>
+            <p className="font-bold text-slate-900">DATA DE EMISSÃO: {selectedDate}</p>
             <p className="text-slate-500 text-[10px]">LOJA / FILIAL: {selectedStore === "all" ? "TODAS AS FILIAIS" : selectedStore.toUpperCase()}</p>
           </div>
         </div>

@@ -95,6 +95,11 @@ interface SettingsViewProps {
   setUserPasswords: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onShowConfirm?: (title: string, message: string, onConfirm: () => void, isDestructive?: boolean) => void;
   onRestoreBackup?: (backupData: any) => void;
+  
+  // Connection and DB Status props
+  connectionStatus?: "online" | "offline" | "sincronizando";
+  activeDbType?: string;
+  activeDbHost?: string;
 }
 
 const L_TEXT = {
@@ -267,7 +272,10 @@ export default function SettingsView({
   userPasswords,
   setUserPasswords,
   onShowConfirm,
-  onRestoreBackup
+  onRestoreBackup,
+  connectionStatus = "online",
+  activeDbType = "sqlite",
+  activeDbHost = "local"
 }: SettingsViewProps) {
   // Interaction feedback states
   const [isSaved, setIsSaved] = useState(false);
@@ -290,6 +298,7 @@ export default function SettingsView({
   const [profileName, setProfileName] = useState(currentUser?.name || "");
   const [profileUsername, setProfileUsername] = useState(currentUser?.username || "");
   const [profileEmail, setProfileEmail] = useState(currentUser?.email || "");
+  const [profileAvatar, setProfileAvatar] = useState(currentUser?.avatar || "");
 
   // Local states for new user creation
   const [newUserName, setNewUserName] = useState("");
@@ -301,18 +310,28 @@ export default function SettingsView({
   const [userActionMessage, setUserActionMessage] = useState<{ success?: boolean; message: string } | null>(null);
 
   // Local states for Self-Hosting Panel
-  const [dbType, setDbType] = useState("mysql");
-  const [dbHost, setDbHost] = useState("65.21.252.101");
-  const [dbPort, setDbPort] = useState("3306");
-  const [dbName, setDbName] = useState("mobitec2_amadje");
-  const [dbUser, setDbUser] = useState("mobitec2_amadje");
-  const [dbPass, setDbPass] = useState("Luanda2020.");
-  const [customDomain, setCustomDomain] = useState("erp.amadje.com");
+  const [dbType, setDbType] = useState(() => localStorage.getItem("host_dbType") || "firebase");
+  const [dbHost, setDbHost] = useState(() => localStorage.getItem("host_dbHost") || "65.21.252.101");
+  const [dbPort, setDbPort] = useState(() => localStorage.getItem("host_dbPort") || "3306");
+  const [dbName, setDbName] = useState(() => localStorage.getItem("host_dbName") || "mobitec2_amadje");
+  const [dbUser, setDbUser] = useState(() => localStorage.getItem("host_dbUser") || "mobitec2_amadje");
+  const [dbPass, setDbPass] = useState(() => localStorage.getItem("host_dbPass") || "Luanda2020.");
+  const [customDomain, setCustomDomain] = useState(() => localStorage.getItem("host_customDomain") || "erp.amadje.com");
+  
+  // Firebase configuration states
+  const [fbApiKey, setFbApiKey] = useState(() => localStorage.getItem("host_fbApiKey") || "");
+  const [fbAuthDomain, setFbAuthDomain] = useState(() => localStorage.getItem("host_fbAuthDomain") || "");
+  const [fbProjectId, setFbProjectId] = useState(() => localStorage.getItem("host_fbProjectId") || "");
+  const [fbStorageBucket, setFbStorageBucket] = useState(() => localStorage.getItem("host_fbStorageBucket") || "");
+  const [fbMessagingSenderId, setFbMessagingSenderId] = useState(() => localStorage.getItem("host_fbMessagingSenderId") || "");
+  const [fbAppId, setFbAppId] = useState(() => localStorage.getItem("host_fbAppId") || "");
+  const [fbDatabaseId, setFbDatabaseId] = useState(() => localStorage.getItem("host_fbDatabaseId") || "");
   const [copiedEnv, setCopiedEnv] = useState(false);
   const [copiedDocker, setCopiedDocker] = useState(false);
   const [activeHostingTab, setActiveHostingTab] = useState("db"); // 'db' | 'domain' | 'hosting' | 'env'
 
   const [testingConnection, setTestingConnection] = useState(false);
+  const [migratingToFirebase, setMigratingToFirebase] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [hostStatusMessage, setHostStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -361,6 +380,14 @@ export default function SettingsView({
           if (data.dbUser) setDbUser(data.dbUser);
           if (data.dbPass) setDbPass(data.dbPass);
           if (data.customDomain) setCustomDomain(data.customDomain);
+          // Firebase fields
+          if (data.fbApiKey) setFbApiKey(data.fbApiKey);
+          if (data.fbAuthDomain) setFbAuthDomain(data.fbAuthDomain);
+          if (data.fbProjectId) setFbProjectId(data.fbProjectId);
+          if (data.fbStorageBucket) setFbStorageBucket(data.fbStorageBucket);
+          if (data.fbMessagingSenderId) setFbMessagingSenderId(data.fbMessagingSenderId);
+          if (data.fbAppId) setFbAppId(data.fbAppId);
+          if (data.fbDatabaseId) setFbDatabaseId(data.fbDatabaseId);
         }
       })
       .catch((err) => console.warn("Aviso: Servidor offline ou protocolo local ativo. Usando SQLite local.", err));
@@ -374,12 +401,25 @@ export default function SettingsView({
     localStorage.setItem("host_dbUser", dbUser);
     localStorage.setItem("host_dbPass", dbPass);
     localStorage.setItem("host_customDomain", customDomain);
+    // Firebase fields
+    localStorage.setItem("host_fbApiKey", fbApiKey);
+    localStorage.setItem("host_fbAuthDomain", fbAuthDomain);
+    localStorage.setItem("host_fbProjectId", fbProjectId);
+    localStorage.setItem("host_fbStorageBucket", fbStorageBucket);
+    localStorage.setItem("host_fbMessagingSenderId", fbMessagingSenderId);
+    localStorage.setItem("host_fbAppId", fbAppId);
+    localStorage.setItem("host_fbDatabaseId", fbDatabaseId);
+
     localStorage.setItem("host_customApiUrl", customApiUrl);
     localStorage.setItem("host_useRemoteApi", useRemoteApi ? "true" : "false");
     localStorage.setItem("host_customGetPath", customGetPath);
     localStorage.setItem("host_customSavePath", customSavePath);
     localStorage.setItem("host_customApiToken", customApiToken);
-  }, [dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain, customApiUrl, useRemoteApi, customGetPath, customSavePath, customApiToken]);
+  }, [
+    dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain, 
+    fbApiKey, fbAuthDomain, fbProjectId, fbStorageBucket, fbMessagingSenderId, fbAppId, fbDatabaseId,
+    customApiUrl, useRemoteApi, customGetPath, customSavePath, customApiToken
+  ]);
 
   const handleTestApiConnection = async () => {
     setTestingApiConnection(true);
@@ -503,7 +543,10 @@ export default function SettingsView({
       const response = await fetch("/api/db/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain }),
+        body: JSON.stringify({ 
+          dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain,
+          fbApiKey, fbAuthDomain, fbProjectId, fbStorageBucket, fbMessagingSenderId, fbAppId, fbDatabaseId
+        }),
       });
       
       const text = await response.text();
@@ -537,6 +580,44 @@ export default function SettingsView({
     }
   };
 
+  const handleMigrateToFirebase = async () => {
+    const confirmMigrate = window.confirm(
+      "Tem a certeza de que deseja eliminar todos os dados no Firebase e migrar todo o conteúdo local atual (Artigos, Clientes, Logística, Utilizadores e Configurações) para o Firebase Firestore?"
+    );
+    if (!confirmMigrate) return;
+
+    setMigratingToFirebase(true);
+    setHostStatusMessage(null);
+    try {
+      const response = await fetch("/api/db/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain,
+          fbApiKey, fbAuthDomain, fbProjectId, fbStorageBucket, fbMessagingSenderId, fbAppId, fbDatabaseId
+        }),
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (jsonErr: any) {
+        throw new Error("O servidor respondeu com um formato inválido.");
+      }
+
+      if (response.ok && data.success) {
+        setHostStatusMessage({ success: true, message: data.message });
+      } else {
+        setHostStatusMessage({ success: false, message: data.error || "Falha ao migrar dados." });
+      }
+    } catch (err: any) {
+      setHostStatusMessage({ success: false, message: "Erro durante a migração: " + err.message });
+    } finally {
+      setMigratingToFirebase(false);
+    }
+  };
+
   const handleSaveConfig = async () => {
     setSavingConfig(true);
     setHostStatusMessage(null);
@@ -544,7 +625,10 @@ export default function SettingsView({
       const response = await fetch("/api/db/save-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain }),
+        body: JSON.stringify({ 
+          dbType, dbHost, dbPort, dbName, dbUser, dbPass, customDomain,
+          fbApiKey, fbAuthDomain, fbProjectId, fbStorageBucket, fbMessagingSenderId, fbAppId, fbDatabaseId
+        }),
       });
       
       const text = await response.text();
@@ -590,6 +674,7 @@ export default function SettingsView({
       setProfileName(currentUser.name);
       setProfileUsername(currentUser.username);
       setProfileEmail(currentUser.email);
+      setProfileAvatar(currentUser.avatar || "");
     }
   }, [currentUser]);
 
@@ -622,7 +707,7 @@ export default function SettingsView({
       name: cleanName,
       username: cleanUsername,
       email: cleanEmail,
-      avatar: cleanName.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()
+      avatar: profileAvatar || cleanName.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()
     };
 
     // Update list of users
@@ -946,7 +1031,26 @@ export default function SettingsView({
               </div>
               <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
                 <span className="flex items-center gap-1.5"><Database size={14} className="text-blue-500" /> {t("database")}:</span>
-                <span className="font-mono">{t("database_val")}</span>
+                <span className="font-mono font-bold capitalize">
+                  {connectionStatus === "offline" ? "SQLite Fallback (Local)" : activeDbType === "firebase" ? "Firebase (Firestore)" : activeDbType === "postgresql" ? "PostgreSQL Nuvem" : "SQLite Local"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                <span className="flex items-center gap-1.5"><Wifi size={14} className={connectionStatus === "online" ? "text-emerald-500 animate-pulse" : "text-slate-400"} /> Estado:</span>
+                <span className="flex items-center gap-1 font-bold">
+                  <span className={`w-2 h-2 rounded-full ${
+                    connectionStatus === "online" 
+                      ? "bg-emerald-500 animate-ping" 
+                      : connectionStatus === "offline" 
+                        ? "bg-red-500" 
+                        : "bg-amber-500 animate-spin"
+                  }`} />
+                  <span className="capitalize">{connectionStatus}</span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <span>Servidor:</span>
+                <span className="truncate max-w-[120px]" title={activeDbHost}>{activeDbHost}</span>
               </div>
             </div>
             <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
@@ -1712,88 +1816,183 @@ export default function SettingsView({
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2 flex items-center gap-2">
                 <Database size={15} className="text-brand-500" />
-                <span>Configuração de Base de Dados Remota (MySQL de Alta Performance)</span>
+                <span>Configuração de Base de Dados do Servidor (MySQL, Postgres ou Firebase Firestore)</span>
               </h3>
               <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                O seu servidor central armazena dados em tempo real numa base de dados relacional segura. Configure aqui o acesso direto do servidor ao seu MySQL privado.
+                O seu servidor central armazena dados em tempo real numa base de dados segura. Escolha o provedor de dados desejado para garantir persistência robusta na nuvem.
               </p>
             </div>
 
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 md:col-span-3">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Tipo de Banco de Dados</label>
                   <select
                     value={dbType}
                     onChange={(e) => setDbType(e.target.value)}
                     className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-semibold text-slate-700 dark:text-slate-250 cursor-pointer"
                   >
+                    <option value="firebase">Firebase Firestore (Nuvem em Tempo Real - Gratuito e Recomendado)</option>
                     <option value="mysql">MySQL / MariaDB (Recomendado para Produção/cPanel)</option>
                     <option value="postgresql">PostgreSQL (Suporte Corporativo)</option>
-                    <option value="sqlite">SQLite (Ficheiro Local - Modo Desenvolvimento)</option>
+                    <option value="sqlite">SQLite (Ficheiro Local - Modo Desenvolvimento e Volátil)</option>
                   </select>
                 </div>
-
-                <div className="space-y-1.5 md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Host / IP do Servidor MySQL</label>
-                  <input
-                    type="text"
-                    value={dbHost}
-                    onChange={(e) => setDbHost(e.target.value)}
-                    placeholder="Ex: 65.21.252.101"
-                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
-                  />
-                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Porta</label>
-                  <input
-                    type="text"
-                    value={dbPort}
-                    onChange={(e) => setDbPort(e.target.value)}
-                    placeholder="3306"
-                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
-                  />
-                </div>
+              {dbType !== "sqlite" && dbType !== "firebase" && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Host / IP do Servidor Banco de Dados</label>
+                    <input
+                      type="text"
+                      value={dbHost}
+                      onChange={(e) => setDbHost(e.target.value)}
+                      placeholder="Ex: 65.21.252.101"
+                      className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                    />
+                  </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Nome do Banco de Dados</label>
-                  <input
-                    type="text"
-                    value={dbName}
-                    onChange={(e) => setDbName(e.target.value)}
-                    placeholder="Ex: mobitec2_amadje"
-                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
-                  />
-                </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Porta</label>
+                      <input
+                        type="text"
+                        value={dbPort}
+                        onChange={(e) => setDbPort(e.target.value)}
+                        placeholder="3306"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Utilizador do Banco (User)</label>
-                  <input
-                    type="text"
-                    value={dbUser}
-                    onChange={(e) => setDbUser(e.target.value)}
-                    placeholder="Ex: mobitec2_amadje"
-                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
-                  />
-                </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Nome do Banco de Dados</label>
+                      <input
+                        type="text"
+                        value={dbName}
+                        onChange={(e) => setDbName(e.target.value)}
+                        placeholder="Ex: mobitec2_amadje"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Senha (Password)</label>
-                  <input
-                    type="password"
-                    value={dbPass}
-                    onChange={(e) => setDbPass(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
-                  />
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Utilizador do Banco (User)</label>
+                      <input
+                        type="text"
+                        value={dbUser}
+                        onChange={(e) => setDbUser(e.target.value)}
+                        placeholder="Ex: mobitec2_amadje"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Senha (Password)</label>
+                      <input
+                        type="password"
+                        value={dbPass}
+                        onChange={(e) => setDbPass(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {dbType === "firebase" && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">ID do Projecto Firebase (Project ID) <span className="text-red-500">*</span></label>
+                      <input
+                        type="text"
+                        value={fbProjectId}
+                        onChange={(e) => setFbProjectId(e.target.value)}
+                        placeholder="Ex: vbsp-erp-3038"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Chave de API (API Key) <span className="text-red-500">*</span></label>
+                      <input
+                        type="password"
+                        value={fbApiKey}
+                        onChange={(e) => setFbApiKey(e.target.value)}
+                        placeholder="Ex: AIzaSyA3..."
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Domínio de Autenticação (Auth Domain)</label>
+                      <input
+                        type="text"
+                        value={fbAuthDomain}
+                        onChange={(e) => setFbAuthDomain(e.target.value)}
+                        placeholder="Ex: vbsp-erp-3038.firebaseapp.com"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Balde de Armazenamento (Storage Bucket)</label>
+                      <input
+                        type="text"
+                        value={fbStorageBucket}
+                        onChange={(e) => setFbStorageBucket(e.target.value)}
+                        placeholder="Ex: vbsp-erp-3038.appspot.com"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">ID do Remetente de Mensagens (Messaging Sender ID)</label>
+                      <input
+                        type="text"
+                        value={fbMessagingSenderId}
+                        onChange={(e) => setFbMessagingSenderId(e.target.value)}
+                        placeholder="Ex: 893120129312"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">ID da Aplicação (App ID)</label>
+                      <input
+                        type="text"
+                        value={fbAppId}
+                        onChange={(e) => setFbAppId(e.target.value)}
+                        placeholder="Ex: 1:893120129312:web:a2b3c4d5"
+                        className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span>ID da Base de Dados (Database ID)</span>
+                      <span className="text-[10px] font-normal text-slate-400 dark:text-slate-500">(Opcional - Vazio por padrão para usar a base de dados principal "(default)")</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={fbDatabaseId}
+                      onChange={(e) => setFbDatabaseId(e.target.value)}
+                      placeholder="Ex: (default)"
+                      className="w-full text-xs bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-dark-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono text-slate-700 dark:text-slate-200"
+                    />
+                  </div>
+                </div>
+              )}
 
               <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                Ao clicar em <strong>"Gravar e Criar Tabelas"</strong>, o sistema grava de forma segura estas credenciais no servidor VBSP e corre automaticamente o script de sincronização de tabelas, estruturando os esquemas de dados de forma 100% autónoma.
+                Ao clicar em <strong>"Gravar Configurações"</strong>, o sistema grava de forma segura estas credenciais no servidor VBSP e liga-se de imediato à base de dados na nuvem para persistência multi-utilizador em tempo real.
               </p>
 
               {hostStatusMessage && (
@@ -1807,7 +2006,7 @@ export default function SettingsView({
                       {hostStatusMessage.success ? <Check size={14} /> : <AlertCircle size={14} />}
                     </div>
                     <div>
-                      <p className="font-bold">{hostStatusMessage.success ? "Ligação à BD Estabelecida!" : "Falha na Ligação à BD"}</p>
+                      <p className="font-bold">{hostStatusMessage.success ? "Status do Servidor" : "Falha na Ligação"}</p>
                       <p className="text-[10px] opacity-90 mt-0.5">{hostStatusMessage.message}</p>
                     </div>
                   </div>
@@ -1818,7 +2017,7 @@ export default function SettingsView({
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={testingConnection || savingConfig}
+                  disabled={testingConnection || savingConfig || migratingToFirebase}
                   className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 dark:border-dark-border text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer active:scale-98"
                 >
                   {testingConnection ? (
@@ -1826,13 +2025,29 @@ export default function SettingsView({
                   ) : (
                     <RefreshCw size={14} className="text-slate-500 animate-spin-slow" />
                   )}
-                  <span>{testingConnection ? "A testar base de dados..." : "Testar Ligação à Base de Dados"}</span>
+                  <span>{testingConnection ? "A testar..." : "Testar Ligação"}</span>
                 </button>
+
+                {dbType === "firebase" && (
+                  <button
+                    type="button"
+                    onClick={handleMigrateToFirebase}
+                    disabled={testingConnection || savingConfig || migratingToFirebase}
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer active:scale-98"
+                  >
+                    {migratingToFirebase ? (
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <Database size={14} />
+                    )}
+                    <span>{migratingToFirebase ? "A migrar..." : "Eliminar & Migrar para Firebase"}</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={handleSaveConfig}
-                  disabled={testingConnection || savingConfig}
+                  disabled={testingConnection || savingConfig || migratingToFirebase}
                   className="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer active:scale-98"
                 >
                   {savingConfig ? (
@@ -1840,7 +2055,7 @@ export default function SettingsView({
                   ) : (
                     <Server size={14} />
                   )}
-                  <span>{savingConfig ? "A sincronizar e a criar tabelas..." : "Gravar e Criar Tabelas no Servidor"}</span>
+                  <span>{savingConfig ? "A gravar..." : "Gravar Configurações"}</span>
                 </button>
               </div>
             </div>
@@ -1875,6 +2090,54 @@ export default function SettingsView({
                 </p>
 
                 <form onSubmit={handleUpdateProfileSubmit} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider block">Foto de Perfil / Avatar</label>
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="w-12 h-12 rounded-full bg-brand-500 overflow-hidden flex items-center justify-center font-display font-bold text-sm text-white border border-slate-200 dark:border-slate-700 shrink-0">
+                        {profileAvatar && profileAvatar.startsWith("data:image/") ? (
+                          <img src={profileAvatar} alt="Foto de perfil" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          profileAvatar || (profileName ? profileName.substring(0, 2).toUpperCase() : "US")
+                        )}
+                      </div>
+                      <div className="flex-1 flex items-center gap-2">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result && typeof event.target.result === "string") {
+                                  setProfileAvatar(event.target.result);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="hidden"
+                          id="user-profile-avatar-upload"
+                        />
+                        <label
+                          htmlFor="user-profile-avatar-upload"
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg text-[10px] font-semibold text-slate-750 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer transition-all hover:scale-[1.02] active:scale-95"
+                        >
+                          Carregar Foto
+                        </label>
+                        {profileAvatar && profileAvatar.startsWith("data:image/") && (
+                          <button
+                            type="button"
+                            onClick={() => setProfileAvatar("")}
+                            className="text-[10px] font-semibold text-red-500 hover:text-red-600 hover:underline cursor-pointer"
+                          >
+                            Remover
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-1">
                     <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider block">Nome Completo</label>
                     <input
